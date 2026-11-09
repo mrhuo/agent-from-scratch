@@ -1,6 +1,7 @@
 import type { LLMClient } from "../llm/index.js";
 import type { ChatResult, Message, ToolCall } from "../llm/types.js";
-import { calculator, toDefinition, type Tool } from "./tools.js";
+import { calculator, type Tool } from "./tools.js";
+import { ToolRegistry } from "./registry.js";
 
 export type StepKind = "thought" | "action" | "observation" | "answer";
 
@@ -30,7 +31,7 @@ const DEFAULT_SYSTEM_PROMPT =
  */
 export class Agent {
   private readonly client: LLMClient;
-  private readonly tools: Map<string, Tool>;
+  private readonly registry: ToolRegistry;
   private readonly maxSteps: number;
   private readonly systemPrompt: string;
   /** 有状态：内部持有整段对话上下文，run() 只追加新一句，循环在它之上叠加。
@@ -39,10 +40,16 @@ export class Agent {
 
   constructor(
     client: LLMClient,
-    options: { tools?: Tool[]; maxSteps?: number; systemPrompt?: string } = {},
+    options: {
+      tools?: Tool<any>[];
+      registry?: ToolRegistry;
+      maxSteps?: number;
+      systemPrompt?: string;
+    } = {},
   ) {
     this.client = client;
-    this.tools = new Map((options.tools ?? []).map((t) => [t.name, t]));
+    // 既可直接传 tools 数组（内部收编进注册表），也可复用外部已建好的注册表
+    this.registry = options.registry ?? new ToolRegistry().registerAll(options.tools ?? []);
     this.maxSteps = options.maxSteps ?? 8;
     this.systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.conversation = [{ role: "system", content: this.systemPrompt }];
@@ -51,7 +58,7 @@ export class Agent {
   async run(userInput: string): Promise<AgentRunResult> {
     this.conversation.push({ role: "user", content: userInput });
     const steps: AgentStep[] = [];
-    const tools = [...this.tools.values()].map(toDefinition);
+    const tools = this.registry.toDefinitions();
 
     for (let step = 0; step < this.maxSteps; step++) {
       const result: ChatResult = await this.client.chatWithTools(this.conversation, tools);
@@ -110,17 +117,10 @@ export class Agent {
     this.conversation = [{ role: "system", content: this.systemPrompt }];
   }
 
-  /** 执行单个工具调用，错误被隔离成字符串观察，不会让整个循环崩溃 */
+  /** 执行单个工具调用：委托给注册表，由其统一做校验与错误分类，
+   *  任何失败都变成字符串观察，不会让整个循环崩溃 */
   private async runTool(call: ToolCall): Promise<string> {
-    const tool = this.tools.get(call.function.name);
-    if (!tool) {
-      return `错误：找不到名为 "${call.function.name}" 的工具`;
-    }
-    try {
-      return String(await tool.execute(call.function.arguments));
-    } catch (err) {
-      return `工具执行出错：${err instanceof Error ? err.message : String(err)}`;
-    }
+    return this.registry.run(call.function.name, call.function.arguments);
   }
 }
 

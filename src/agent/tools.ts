@@ -1,18 +1,59 @@
+import { z } from "zod";
 import type { ToolDefinition } from "../llm/types.js";
+import { zodToJsonSchema } from "./schema.js";
 
 /**
- * 一个工具的高层定义：名字、给模型看的描述、参数 JSON Schema，以及执行函数。
- * 注意：本系列在篇 4 才会把它升级成「带 Zod 校验的注册表」，这里先用最小形态，
- * 足以让 Agent Loop 跑起来。
+ * 一个工具的高层定义。
+ *
+ * 与第 2 篇的「最小形态」相比，本篇用 Zod 接管了参数：
+ *  - `parameters` 是一个 Zod schema，它同时承担两件事：
+ *      1) 运行时校验模型给的参数（不合法直接拦下，不进 execute）；
+ *      2) 生成喂给模型的 JSON Schema（单一事实来源，不会和校验逻辑漂移）。
+ *  - `execute` 收到的 `args` 已经通过 Zod 校验，可以放心使用。
  */
-export interface Tool {
+export interface Tool<T extends z.ZodTypeAny = z.ZodTypeAny> {
   name: string;
-  /** 给模型看的自然语言描述，决定模型会不会、什么时候调用它 */
+  /** 给模型看的自然语言描述，决定模型懂不懂、什么时候用这个工具 */
   description: string;
-  /** 参数的 JSON Schema 形态，直接喂给模型 */
-  parameters: Record<string, unknown>;
+  /** 参数 Zod schema：既是运行时校验器，也是生成 JSON Schema 的来源 */
+  parameters: T;
   /** 执行工具，返回字符串形式的观察结果（喂回模型） */
-  execute: (args: Record<string, unknown>) => Promise<string> | string;
+  execute: (args: z.infer<T>) => Promise<string> | string;
+}
+
+/** 工具执行失败的分类：找不到 / 参数不合法 / 执行抛异常 */
+export type ToolErrorKind = "not_found" | "validation" | "execution";
+
+/** 携带分类信息的工具错误，便于上层把错误转成结构化的观察文本 */
+export class ToolError extends Error {
+  readonly kind: ToolErrorKind;
+  constructor(kind: ToolErrorKind, message: string) {
+    super(message);
+    this.kind = kind;
+    this.name = "ToolError";
+  }
+}
+
+/**
+ * 把高层 Tool 转成发给模型的 ToolDefinition。
+ * parameters 由 Zod schema 自动生成 JSON Schema，模型不需要知道怎么执行。
+ */
+export function toDefinition(tool: Tool<any>): ToolDefinition {
+  return {
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: zodToJsonSchema(tool.parameters),
+    },
+  };
+}
+
+/** 把 ZodError 压缩成一行可读信息，写进观察结果让模型自行纠正 */
+export function formatZodError(error: z.ZodError): string {
+  return error.issues
+    .map((i) => `${i.path.length ? i.path.join(".") : "(root)"}: ${i.message}`)
+    .join("; ");
 }
 
 /**
@@ -21,7 +62,8 @@ export interface Tool {
  *
  * 为什么不直接用 eval(expression)？因为 expression 来自模型——而模型可能被
  * 诱导输出 `1+1; process.exit(1)` 之类的东西。白名单是 Agent 使用外部输入时
- * 的通用铁律：先验证形态，再执行。
+ * 的通用铁律：先验证形态，再执行。这一层与「Zod 参数校验」是互补的两道防线：
+ * Zod 保证 expression 是个字符串，白名单保证这个字符串里没有危险字符。
  */
 const ARITH_WHITELIST = /^[\d+\-*/().\s]+$/;
 
@@ -42,32 +84,17 @@ export function evalArithmetic(expression: string): string {
   }
 }
 
-/** 篇 2 内置的唯一工具：计算器。它的存在是为了让 Agent Loop 第一次"动手" */
-export const calculator: Tool = {
+/** 本系列第一个工具：计算器。参数用 Zod 定义，execute 收到的已是合法字符串 */
+const calculatorParams = z.object({
+  expression: z
+    .string()
+    .describe('要计算的算术表达式，例如 "23 * 17" 或 "(1024 - 256) / 8"'),
+});
+
+export const calculator: Tool<typeof calculatorParams> = {
   name: "calculator",
   description:
     "计算一个算术表达式的值。支持加(+)、减(-)、乘(*)、除(/)和括号()，例如 \"23 * 17\" 或 \"(1024 - 256) / 8\"。凡是需要算数，优先调用它，不要凭记忆口算。",
-  parameters: {
-    type: "object",
-    properties: {
-      expression: {
-        type: "string",
-        description: "要计算的算术表达式，例如 \"23 * 17\"",
-      },
-    },
-    required: ["expression"],
-  },
-  execute: (args) => evalArithmetic(String(args.expression ?? "")),
+  parameters: calculatorParams,
+  execute: (args) => evalArithmetic(args.expression),
 };
-
-/** 把高层 Tool 转成发给模型的 ToolDefinition（去掉 execute，模型不需要知道怎么执行） */
-export function toDefinition(tool: Tool): ToolDefinition {
-  return {
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  };
-}

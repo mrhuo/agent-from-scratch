@@ -15,7 +15,7 @@
 | 01 | 它到底是什么，以及为什么不直接用框架（开篇 + 工程地基 + LLM 接入层） | ✅ 已完成 |
 | 02 | 工程地基：Node22 + TS + 统一 LLM 客户端（含于第 1 篇） | ✅ 已完成 |
 | 03 | 心脏：Agent Loop 与 ReAct | ✅ 已完成 |
-| 04 | 长出手脚：Tool 系统设计 | 规划中 |
+| 04 | 长出手脚：Tool 系统设计 | ✅ 已完成 |
 | 05 | 第一个真工具：搜索 / 计算 / 读文件 | 规划中 |
 | 06 | 记忆的两种形态（短期 / 长期） | 规划中 |
 | 07 | 会规划：Plan-and-Execute | 规划中 |
@@ -26,7 +26,7 @@
 | 12 | 上线与可观测 | 规划中 |
 | 13 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | 规划中 |
 
-> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」。每篇博文对应一个 `post-NN` tag。
+> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）。每篇博文对应一个 `post-NN` tag。
 
 每篇博文在 `posts/NN.md`，配套代码增量在 `src/` 对应目录。
 
@@ -73,9 +73,10 @@ npm run typecheck
 git clone https://github.com/mrhuo/agent-from-scratch.git
 git checkout post-01   # 回到第 1 篇完成时的代码
 git checkout post-02   # 回到第 2 篇（Agent Loop）完成时的代码
+git checkout post-03   # 回到第 3 篇（Tool 系统：Zod + 注册表）完成时的代码
 ```
 
-后续章节发布后会追加 `post-03`、`post-04` …… 以此类推。
+后续章节发布后会追加 `post-04`、`post-05` …… 以此类推。
 
 ## 目录结构
 
@@ -86,8 +87,8 @@ agent-from-scratch/
 ├─ .env.example          # OPENAI_API_KEY / BASE_URL / MODEL 模板
 ├─ src/
 │  ├─ llm/               # 篇01：LLMClient（OpenAI 兼容，非流式 + 流式 SSE）
-│  ├─ agent/             # 篇03：Agent Loop
-│  ├─ tools/             # 篇04-05：工具注册表 + 首个工具
+│  ├─ agent/             # 篇02-03：Agent Loop + Tool 系统（ToolRegistry / Zod schema / ToolError）
+│  ├─ tools/             # 篇04 起：搜索 / 计算 / 读文件等真工具
 │  ├─ memory/            # 篇06：短/长期记忆
 │  ├─ planner/           # 篇07：任务树
 │  ├─ orchestrator/      # 篇08：多 Agent

@@ -4,13 +4,13 @@ import dotenv from "dotenv";
 dotenv.config({ override: true });
 import { LLMClient } from "./llm/index.js";
 import { Agent } from "./agent/index.js";
-import { calculator } from "./agent/index.js";
+import { calculator, ToolRegistry } from "./agent/index.js";
 import type { AgentStep } from "./agent/index.js";
 import * as readline from "node:readline";
 
 /**
- * 第 2 篇配套 demo：基于 Agent Loop 的交互式 REPL。
- * 终端输入一句，Agent 进入「思考 → 行动 → 观察」循环，可能调用计算器，
+ * 第 3 篇配套 demo：基于 Agent Loop + 工具注册表的交互式 REPL。
+ * 终端输入一句，Agent 进入「思考 → 行动 → 观察」循环，可能调用注册表中的工具，
  * 最终给出回答；每轮把循环里的步骤打印出来，让"动手"过程可见。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
@@ -32,7 +32,11 @@ async function main(): Promise<void> {
     baseURL: process.env.BASE_URL || undefined,
     model: process.env.MODEL ?? "gpt-4o-mini",
   });
-  const agent = new Agent(client, { tools: [calculator], maxSteps: 6 });
+
+  // 第 3 篇新增：先把工具收编进注册表，再交给 Agent。后续加搜索、读文件等工具，
+  // 只要在这里 register 即可，Agent 内核一行都不用改。
+  const registry = new ToolRegistry().register(calculator);
+  const agent = new Agent(client, { registry, maxSteps: 6 });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   // 用 line 事件 + 队列，避免 question 在异步 await 期间因管道 EOF 关闭而抛 ERR_USE_AFTER_CLOSE。
