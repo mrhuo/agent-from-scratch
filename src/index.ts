@@ -4,10 +4,12 @@ import dotenv from "dotenv";
 dotenv.config({ override: true });
 import { LLMClient } from "./llm/index.js";
 import type { Message } from "./llm/types.js";
+import * as readline from "node:readline";
 
 /**
- * 第 1 篇配套 demo：跑通一次流式对话。
- * 真正的 Agent 循环在篇 3 才出现，这里先验证「模型能对话」这条最短路。
+ * 第 1 篇配套 demo：交互式对话 REPL。
+ * 终端输入一句，模型流式回复一句；多轮上下文累积在 messages 里。
+ * 真正的 Agent 循环在篇 3 才出现，这里先验证「多轮对话」这条最短路。
  */
 async function main(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -22,16 +24,70 @@ async function main(): Promise<void> {
     model: process.env.MODEL ?? "gpt-4o-mini",
   });
 
+  // system 设定人设；之后每轮 user/assistant 交替追加，构成多轮上下文。
   const messages: Message[] = [
-    { role: "system", content: "你是一个简洁的中文助手，回答不超过两句话。" },
-    { role: "user", content: "用一句话解释什么是 AI Agent。" },
+    { role: "system", content: "你是一个简洁的中文助手，每轮回答不超过三句话。" },
   ];
 
-  process.stdout.write("助手：");
-  for await (const chunk of client.chatStream(messages)) {
-    process.stdout.write(chunk);
+  const rl = readline.createInterface({ input: process.stdin, terminal: false });
+  // 用 line 事件 + 队列，避免 question 在异步 await 期间因管道 EOF 关闭而抛 ERR_USE_AFTER_CLOSE。
+  const queue: string[] = [];
+  let resolveNext: ((value: string | null) => void) | null = null;
+  let eof = false;
+  rl.on("line", (line) => {
+    if (resolveNext) {
+      const r = resolveNext;
+      resolveNext = null;
+      r(line);
+    } else {
+      queue.push(line);
+    }
+  });
+  rl.on("close", () => {
+    eof = true;
+    if (resolveNext) {
+      const r = resolveNext;
+      resolveNext = null;
+      r(null);
+    }
+  });
+
+  const nextLine = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      if (queue.length > 0) {
+        resolve(queue.shift() ?? "");
+        return;
+      }
+      if (eof) {
+        resolve(null);
+        return;
+      }
+      resolveNext = resolve;
+    });
+
+  console.log("对话开始（输入 exit 或按 Ctrl+C 退出）");
+  while (true) {
+    const line = await nextLine();
+    if (line === null) break; // EOF
+    const text = line.trim();
+    if (text === "") continue;
+    if (text === "exit" || text === "quit") break;
+
+    // 非 TTY（管道/重定向）下输入不回显，主动打印用户输入便于阅读。
+    if (!process.stdin.isTTY) console.log(`你：${text}`);
+    messages.push({ role: "user", content: text });
+    process.stdout.write("助手：");
+    let full = "";
+    for await (const chunk of client.chatStream(messages)) {
+      process.stdout.write(chunk);
+      full += chunk;
+    }
+    process.stdout.write("\n");
+    messages.push({ role: "assistant", content: full });
   }
-  process.stdout.write("\n");
+
+  rl.close();
+  console.log("对话结束。");
 }
 
 main().catch((err) => {
