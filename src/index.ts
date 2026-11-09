@@ -1,4 +1,7 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+// override: true —— 本地 .env 优先于外层已注入的环境变量（如 CI / 沙箱预设的 OPENAI_API_KEY），
+// 避免「明明填了 key，发出去的却是别处的 key」这种静默覆盖坑。
+dotenv.config({ override: true });
 import { LLMClient } from "./llm/index.js";
 import type { Message } from "./llm/types.js";
 
