@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { LLMClient } from "./llm/index.js";
 import type { Message } from "./llm/types.js";
 
