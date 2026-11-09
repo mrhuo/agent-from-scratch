@@ -3,14 +3,23 @@ import dotenv from "dotenv";
 // 避免「明明填了 key，发出去的却是别处的 key」这种静默覆盖坑。
 dotenv.config({ override: true });
 import { LLMClient } from "./llm/index.js";
-import type { Message } from "./llm/types.js";
+import { Agent } from "./agent/index.js";
+import { calculator } from "./agent/index.js";
+import type { AgentStep } from "./agent/index.js";
 import * as readline from "node:readline";
 
 /**
- * 第 1 篇配套 demo：交互式对话 REPL。
- * 终端输入一句，模型流式回复一句；多轮上下文累积在 messages 里。
- * 真正的 Agent 循环在篇 3 才出现，这里先验证「多轮对话」这条最短路。
+ * 第 2 篇配套 demo：基于 Agent Loop 的交互式 REPL。
+ * 终端输入一句，Agent 进入「思考 → 行动 → 观察」循环，可能调用计算器，
+ * 最终给出回答；每轮把循环里的步骤打印出来，让"动手"过程可见。
  */
+const STEP_LABEL: Record<AgentStep["kind"], string> = {
+  thought: "思考",
+  action: "行动",
+  observation: "观察",
+  answer: "回答",
+};
+
 async function main(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -23,11 +32,7 @@ async function main(): Promise<void> {
     baseURL: process.env.BASE_URL || undefined,
     model: process.env.MODEL ?? "gpt-4o-mini",
   });
-
-  // system 设定人设；之后每轮 user/assistant 交替追加，构成多轮上下文。
-  const messages: Message[] = [
-    { role: "system", content: "你是一个简洁的中文助手，每轮回答不超过三句话。" },
-  ];
+  const agent = new Agent(client, { tools: [calculator], maxSteps: 6 });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   // 用 line 事件 + 队列，避免 question 在异步 await 期间因管道 EOF 关闭而抛 ERR_USE_AFTER_CLOSE。
@@ -65,11 +70,9 @@ async function main(): Promise<void> {
       resolveNext = resolve;
     });
 
-  console.log("对话开始（输入 exit 或按 Ctrl+C 退出）");
+  console.log("Agent 对话开始（输入 exit 退出）");
   while (true) {
     // 用户输入统一加「你：」前缀，与助手回复的「助手：」对称，便于阅读多轮对话。
-    // TTY 下「你：」打印后由终端回显用户输入；非 TTY（管道/重定向）下输入不回显，
-    // 故在拿到文本后补印到同一行，保证两种模式输出一致。
     process.stdout.write("你：");
     const line = await nextLine();
     if (line === null) break; // EOF
@@ -78,15 +81,12 @@ async function main(): Promise<void> {
     if (text === "exit" || text === "quit") break;
 
     if (!process.stdin.isTTY) process.stdout.write(`${text}\n`);
-    messages.push({ role: "user", content: text });
-    process.stdout.write("助手：");
-    let full = "";
-    for await (const chunk of client.chatStream(messages)) {
-      process.stdout.write(chunk);
-      full += chunk;
+
+    const { answer, steps } = await agent.run(text);
+    for (const step of steps) {
+      console.log(`  [${STEP_LABEL[step.kind]}] ${step.text}`);
     }
-    process.stdout.write("\n");
-    messages.push({ role: "assistant", content: full });
+    console.log(`助手：${answer}`);
   }
 
   rl.close();

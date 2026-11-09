@@ -88,3 +88,55 @@ describe("LLMClient.chatStream", () => {
     expect(out.join("")).toBe("ok");
   });
 });
+
+describe("LLMClient.chatWithTools", () => {
+  it("parses tool_calls and their argument JSON string", async () => {
+    const fakeFn = vi.fn(fetchSig);
+    fakeFn.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "我来算一下",
+                  tool_calls: [
+                    {
+                      id: "c1",
+                      type: "function",
+                      function: { name: "calculator", arguments: '{"expression":"23 * 17"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+
+    const out = await makeClient(fakeFn as unknown as typeof fetch).chatWithTools(messages, [
+      { type: "function", function: { name: "calculator", description: "", parameters: {} } },
+    ]);
+    expect(out.content).toBe("我来算一下");
+    expect(out.toolCalls).toHaveLength(1);
+    expect(out.toolCalls[0]!.function.name).toBe("calculator");
+    expect(out.toolCalls[0]!.function.arguments).toEqual({ expression: "23 * 17" });
+
+    const call = fakeFn.mock.calls[0]!;
+    const init = call[1]!;
+    expect(init.headers).toMatchObject({ Authorization: "Bearer test-key" });
+    const body = JSON.parse(init.body as string);
+    expect(body.tools[0].function.name).toBe("calculator");
+    expect(body.stream).toBe(false);
+  });
+
+  it("throws with status when response is not ok", async () => {
+    const fakeFn = vi.fn(fetchSig);
+    fakeFn.mockImplementation(async () => new Response("unauthorized", { status: 401 }));
+
+    await expect(
+      makeClient(fakeFn as unknown as typeof fetch).chatWithTools(messages, []),
+    ).rejects.toThrow(/401/);
+  });
+});
