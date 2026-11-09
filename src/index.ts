@@ -67,14 +67,17 @@ async function main(): Promise<void> {
 
   console.log("对话开始（输入 exit 或按 Ctrl+C 退出）");
   while (true) {
+    // 用户输入统一加「你：」前缀，与助手回复的「助手：」对称，便于阅读多轮对话。
+    // TTY 下「你：」打印后由终端回显用户输入；非 TTY（管道/重定向）下输入不回显，
+    // 故在拿到文本后补印到同一行，保证两种模式输出一致。
+    process.stdout.write("你：");
     const line = await nextLine();
     if (line === null) break; // EOF
     const text = line.trim();
     if (text === "") continue;
     if (text === "exit" || text === "quit") break;
 
-    // 非 TTY（管道/重定向）下输入不回显，主动打印用户输入便于阅读。
-    if (!process.stdin.isTTY) console.log(`你：${text}`);
+    if (!process.stdin.isTTY) process.stdout.write(`${text}\n`);
     messages.push({ role: "user", content: text });
     process.stdout.write("助手：");
     let full = "";
