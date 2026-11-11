@@ -3,15 +3,16 @@ import dotenv from "dotenv";
 // 避免「明明填了 key，发出去的却是别处的 key」这种静默覆盖坑。
 dotenv.config({ override: true });
 import { LLMClient } from "./llm/index.js";
-import { Agent } from "./agent/index.js";
-import { calculator, ToolRegistry } from "./agent/index.js";
+import { Agent, ToolRegistry } from "./agent/index.js";
 import type { AgentStep } from "./agent/index.js";
+import { allTools } from "./tools/index.js";
 import * as readline from "node:readline";
 
 /**
- * 第 3 篇配套 demo：基于 Agent Loop + 工具注册表的交互式 REPL。
- * 终端输入一句，Agent 进入「思考 → 行动 → 观察」循环，可能调用注册表中的工具，
- * 最终给出回答；每轮把循环里的步骤打印出来，让"动手"过程可见。
+ * 第 4 篇配套 demo：基于 Agent Loop + 工具注册表的交互式 REPL。
+ * 终端输入一句，Agent 进入「思考 → 行动 → 观察」循环，可能调用注册表中的任意真工具
+ * （calculator / readFile / searchFiles / webFetch），最终给出回答；
+ * 每轮把循环里的步骤打印出来，让"动手"过程可见。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -33,10 +34,10 @@ async function main(): Promise<void> {
     model: process.env.MODEL ?? "gpt-4o-mini",
   });
 
-  // 第 3 篇新增：先把工具收编进注册表，再交给 Agent。后续加搜索、读文件等工具，
-  // 只要在这里 register 即可，Agent 内核一行都不用改。
-  const registry = new ToolRegistry().register(calculator);
-  const agent = new Agent(client, { registry, maxSteps: 6 });
+  // 第 4 篇：把全部真工具（calculator / readFile / searchFiles / webFetch）收编进注册表。
+  // 新增工具只需在 src/tools/index.ts 的 allTools 里加一项，Agent 内核一行都不用改。
+  const registry = new ToolRegistry().registerAll(allTools);
+  const agent = new Agent(client, { registry, maxSteps: 8 });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   // 用 line 事件 + 队列，避免 question 在异步 await 期间因管道 EOF 关闭而抛 ERR_USE_AFTER_CLOSE。
