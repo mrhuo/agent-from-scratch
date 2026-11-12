@@ -18,14 +18,17 @@ export interface AgentRunResult {
 const DEFAULT_SYSTEM_PROMPT =
   "你是一个会使用工具的智能助手。你拥有若干工具，可以：用 calculator 做算术、用 readFile 读本地资料、" +
   "用 searchFiles 在资料中检索关键词、用 webFetch 抓取网页。遇到需要这些能力的问题，优先调用对应工具；" +
-  "拿到工具返回的观察结果后继续推理。当信息已经足够回答用户时，直接给出最终答案，不要再调用工具。";
+  "拿到工具返回的观察结果后继续推理。当信息已经足够回答用户时，直接给出最终答案，不要再调用工具。\n" +
+  "关于多工具协作：如果多个工具调用彼此独立（例如同时抓取两个网页、同时读两个文件），" +
+  "请在同一次回复里一次性发出，我会并行执行它们；如果后一个工具需要前一个的返回结果" +
+  "（例如先 searchFiles 找到文件名、再 readFile 读它），就分两轮，先拿到观察再决定下一步。";
 
 /**
  * 最小 Agent：把「思考 → 行动 → 观察」串成一个会自动转的循环。
  *
  * 循环逻辑：
  *   1. 把当前上下文发给模型，问它「下一步做什么」。
- *   2. 若模型返回 tool_calls → 逐个执行工具，把结果（观察）写回上下文，回到第 1 步。
+ *   2. 若模型返回 tool_calls → 并行执行这些工具（独立调用同时跑），把结果（观察）写回上下文，回到第 1 步。
  *   3. 若模型不再调工具 → 它的文本就是最终答案，结束。
  *
  * maxSteps 是安全阀：防止模型陷入「永远调工具」的死循环，耗尽 token。
@@ -84,17 +87,24 @@ export class Agent {
           })),
         });
 
-        for (const call of result.toolCalls) {
-          steps.push({
-            kind: "action",
-            text: `${call.function.name}(${JSON.stringify(call.function.arguments)})`,
-          });
-          const observation = await this.runTool(call);
+        // 一次回复可能要求调用多个工具。彼此独立的调用（如并行抓取两个网页）
+        // 用 Promise.all 同时跑，省时间；彼此依赖的调用模型会自动拆成两轮，
+        // 依赖关系的编排由上面的 for 循环自然完成。registry.run 永不抛异常
+        // （失败转成观察文本），所以 Promise.all 不会因单个工具失败而短路。
+        const executed = await Promise.all(
+          result.toolCalls.map(async (call) => {
+            const actionText = `${call.function.name}(${JSON.stringify(call.function.arguments)})`;
+            const observation = await this.runTool(call);
+            return { id: call.id, actionText, observation };
+          }),
+        );
+        for (const { id, actionText, observation } of executed) {
+          steps.push({ kind: "action", text: actionText });
           steps.push({ kind: "observation", text: observation });
           this.conversation.push({
             role: "tool",
             content: observation,
-            tool_call_id: call.id,
+            tool_call_id: id,
           });
         }
         continue; // 带着观察结果再转一圈

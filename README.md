@@ -17,16 +17,17 @@
 | 03 | 心脏：Agent Loop 与 ReAct | ✅ 已完成 |
 | 04 | 长出手脚：Tool 系统设计 | ✅ 已完成 |
 | 05 | 第一个真工具：搜索 / 计算 / 读文件 | ✅ 已完成 |
-| 06 | 记忆的两种形态（短期 / 长期） | 规划中 |
-| 07 | 会规划：Plan-and-Execute | 规划中 |
-| 08 | 多 Agent 协作 | 规划中 |
-| 09 | 接外部世界：MCP 实战 | 规划中 |
-| 10 | 让 Agent 可信：权限 / 沙箱 / 人工介入 | 规划中 |
-| 11 | 持久化与恢复：会话、状态、崩溃续跑 | 规划中 |
-| 12 | 上线与可观测 | 规划中 |
-| 13 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | 规划中 |
+| 06 | 多工具协作：串行编排与并行执行 | ✅ 已完成 |
+| 07 | 记忆的两种形态（短期 / 长期） | 规划中 |
+| 08 | 会规划：Plan-and-Execute | 规划中 |
+| 09 | 多 Agent 协作 | 规划中 |
+| 10 | 接外部世界：MCP 实战 | 规划中 |
+| 11 | 让 Agent 可信：权限 / 沙箱 / 人工介入 | 规划中 |
+| 12 | 持久化与恢复：会话、状态、崩溃续跑 | 规划中 |
+| 13 | 上线与可观测 | 规划中 |
+| 14 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | 规划中 |
 
-> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断。每篇博文对应一个 `post-NN` tag。
+> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）。每篇博文对应一个 `post-NN` tag。
 
 每篇博文在 `posts/NN.md`，配套代码增量在 `src/` 对应目录。
 
@@ -75,9 +76,10 @@ git checkout post-01   # 回到第 1 篇完成时的代码
 git checkout post-02   # 回到第 2 篇（Agent Loop）完成时的代码
 git checkout post-03   # 回到第 3 篇（Tool 系统：Zod + 注册表）完成时的代码
 git checkout post-04   # 回到第 4 篇（真工具：readFile / searchFiles / webFetch）完成时的代码
+git checkout post-05   # 回到第 5 篇（多工具协作：并行执行 + 串行编排）完成时的代码
 ```
 
-后续章节发布后会追加 `post-05`、`post-06` …… 以此类推。
+后续章节发布后会追加 `post-06`、`post-07` …… 以此类推。
 
 ## 目录结构
 
