@@ -2,6 +2,8 @@ import type { LLMClient } from "../llm/index.js";
 import type { ChatResult, Message, ToolCall } from "../llm/types.js";
 import { calculator, type Tool } from "./tools.js";
 import { ToolRegistry } from "./registry.js";
+import type { ContextCompressor } from "../memory/ContextCompressor.js";
+import type { MemoryStore } from "../memory/MemoryStore.js";
 
 export type StepKind = "thought" | "action" | "observation" | "answer";
 
@@ -21,7 +23,10 @@ const DEFAULT_SYSTEM_PROMPT =
   "拿到工具返回的观察结果后继续推理。当信息已经足够回答用户时，直接给出最终答案，不要再调用工具。\n" +
   "关于多工具协作：如果多个工具调用彼此独立（例如同时抓取两个网页、同时读两个文件），" +
   "请在同一次回复里一次性发出，我会并行执行它们；如果后一个工具需要前一个的返回结果" +
-  "（例如先 searchFiles 找到文件名、再 readFile 读它），就分两轮，先拿到观察再决定下一步。";
+  "（例如先 searchFiles 找到文件名、再 readFile 读它），就分两轮，先拿到观察再决定下一步。\n" +
+  "关于长期记忆：你拥有 remember 与 recall 两个工具。凡是用户告诉你、且未来可能用到的" +
+  "事实、偏好或结论（名字、语言偏好、项目代号等），主动调用 remember 记下来；当用户的问题" +
+  "可能依赖这些信息时，先调用 recall 回忆再回答。";
 
 /**
  * 最小 Agent：把「思考 → 行动 → 观察」串成一个会自动转的循环。
@@ -38,8 +43,12 @@ export class Agent {
   private readonly registry: ToolRegistry;
   private readonly maxSteps: number;
   private readonly systemPrompt: string;
+  /** 短期记忆压缩器：历史轮次超阈值时，把旧轮次摘要成一条 system 消息再发 */
+  private readonly compressor?: ContextCompressor;
+  /** 长期记忆存储：跨会话持久化，并用于把相关事实注入每轮上下文 */
+  private readonly memoryStore?: MemoryStore;
   /** 有状态：内部持有整段对话上下文，run() 只追加新一句，循环在它之上叠加。
-   *  这样 REPL 多轮对话才能保留记忆——第 6 篇会在此基础上加摘要与长期记忆。 */
+   *  短期压缩只作用于「发往模型的上下文」，这份本地历史始终保持完整——详见 buildContext。 */
   private conversation: Message[];
 
   constructor(
@@ -49,6 +58,8 @@ export class Agent {
       registry?: ToolRegistry;
       maxSteps?: number;
       systemPrompt?: string;
+      compressor?: ContextCompressor;
+      memoryStore?: MemoryStore;
     } = {},
   ) {
     this.client = client;
@@ -56,6 +67,8 @@ export class Agent {
     this.registry = options.registry ?? new ToolRegistry().registerAll(options.tools ?? []);
     this.maxSteps = options.maxSteps ?? 8;
     this.systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.compressor = options.compressor;
+    this.memoryStore = options.memoryStore;
     this.conversation = [{ role: "system", content: this.systemPrompt }];
   }
 
@@ -65,7 +78,9 @@ export class Agent {
     const tools = this.registry.toDefinitions();
 
     for (let step = 0; step < this.maxSteps; step++) {
-      const result: ChatResult = await this.client.chatWithTools(this.conversation, tools);
+      // 组装本轮发给模型的上下文：基础 system + 长期记忆简报 + 历史（必要时压缩）
+      const sendMessages = await this.buildContext(userInput);
+      const result: ChatResult = await this.client.chatWithTools(sendMessages, tools);
 
       if (result.toolCalls.length > 0) {
         // 模型这一轮先说了一段思考（可能为空），记录下来
@@ -126,6 +141,39 @@ export class Agent {
   /** 清空对话上下文，回到只有 system 提示语的初始状态 */
   reset(): void {
     this.conversation = [{ role: "system", content: this.systemPrompt }];
+  }
+
+  /**
+   * 组装「发往模型」的上下文，是两种记忆真正落地的入口：
+   *
+   *  1. 从完整本地历史 `this.conversation` 拷贝一份（不动原件，保证本地不丢信息）。
+   *  2. 若挂了长期记忆，用本轮用户输入去检索相关事实，注入到 system 提示里
+   *     （这是长期记忆的「被动」形态：模型不必主动调 recall，相关事实已摆在眼前）。
+   *  3. 若挂了压缩器，把旧轮次摘要成一条 system 消息，防止上下文溢出窗口。
+   *
+   * 关键设计：压缩只发生在「发给模型」这一步，本地 `this.conversation` 永远保留
+   * 全量历史。好处是简单、可调试；代价是本地内存仍随对话增长——真要无限对话，
+   * 可把压缩后的摘要回写进 `this.conversation`，第 11 篇持久化时再处理。
+   */
+  private async buildContext(currentUserInput: string): Promise<Message[]> {
+    const base = this.conversation.map((m) => ({ ...m }));
+
+    if (this.memoryStore) {
+      const hits = await this.memoryStore.search(currentUserInput, 5);
+      if (hits.length > 0) {
+        const brief = hits.map((h) => `- [${h.key}] ${h.content}`).join("\n");
+        const idx = base.findIndex((m) => m.role === "system");
+        const basePrompt = idx >= 0 ? (base[idx]!.content ?? "") : "";
+        const augmented = `${basePrompt}\n\n【长期记忆·相关事实】\n${brief}`;
+        if (idx >= 0) base[idx]!.content = augmented;
+        else base.unshift({ role: "system", content: augmented });
+      }
+    }
+
+    if (this.compressor) {
+      return (await this.compressor.compress(base)).messages;
+    }
+    return base;
   }
 
   /** 执行单个工具调用：委托给注册表，由其统一做校验与错误分类，

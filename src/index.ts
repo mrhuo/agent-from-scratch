@@ -6,13 +6,17 @@ import { LLMClient } from "./llm/index.js";
 import { Agent, ToolRegistry } from "./agent/index.js";
 import type { AgentStep } from "./agent/index.js";
 import { allTools } from "./tools/index.js";
+import { MemoryStore } from "./memory/MemoryStore.js";
+import { ContextCompressor, LLMSummarizer } from "./memory/ContextCompressor.js";
+import { createRememberTool, createRecallTool } from "./tools/memory.js";
+import { join } from "node:path";
 import * as readline from "node:readline";
 
 /**
- * 第 4 篇配套 demo：基于 Agent Loop + 工具注册表的交互式 REPL。
- * 终端输入一句，Agent 进入「思考 → 行动 → 观察」循环，可能调用注册表中的任意真工具
- * （calculator / readFile / searchFiles / webFetch），最终给出回答；
- * 每轮把循环里的步骤打印出来，让"动手"过程可见。
+ * 第 6 篇配套 demo：在「思考 → 行动 → 观察」循环之上，加上两种记忆。
+ *  - 短期记忆：历史轮次超阈值时自动摘要，防止上下文溢出窗口。
+ *  - 长期记忆：remember / recall 两个工具把事实落盘到 data/memory.json，
+ *    并自动把与本轮问题相关的事实注入 system 提示，跨会话都记得住。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -34,10 +38,20 @@ async function main(): Promise<void> {
     model: process.env.MODEL ?? "gpt-4o-mini",
   });
 
-  // 第 4 篇：把全部真工具（calculator / readFile / searchFiles / webFetch）收编进注册表。
-  // 新增工具只需在 src/tools/index.ts 的 allTools 里加一项，Agent 内核一行都不用改。
-  const registry = new ToolRegistry().registerAll(allTools);
-  const agent = new Agent(client, { registry, maxSteps: 8 });
+  // 长期记忆：落盘到项目目录下的 data/memory.json（已加入 .gitignore，不会进提交）。
+  const memoryStore = new MemoryStore(join(process.cwd(), "data", "memory.json"));
+
+  // 短期记忆：用 LLM 把旧轮次压成摘要；保留最近 6 个用户轮原样。
+  const compressor = new ContextCompressor(new LLMSummarizer(client), 6);
+
+  // 第 4 篇的四大真工具 + 第 6 篇的两个记忆工具，全部收编进注册表。
+  // 新增工具只需在对应 index 里加一项，Agent 内核一行都不用改。
+  const registry = new ToolRegistry().registerAll([
+    ...allTools,
+    createRememberTool(memoryStore),
+    createRecallTool(memoryStore),
+  ]);
+  const agent = new Agent(client, { registry, maxSteps: 8, compressor, memoryStore });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   // 用 line 事件 + 队列，避免 question 在异步 await 期间因管道 EOF 关闭而抛 ERR_USE_AFTER_CLOSE。
