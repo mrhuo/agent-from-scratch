@@ -149,6 +149,9 @@ export class LLMClient {
       max_tokens: options.maxTokens,
       stream: options.stream ?? false,
     };
+    // 结构化输出：要求模型只返回 JSON（需 endpoint 支持 json_object 模式）。
+    // 解析侧（如 Planner.parsePlan）另有抠 {...} 的容错兜底，避免模型多嘴。
+    if (options.jsonMode) body.response_format = { type: "json_object" };
     // 仅在有工具时附加 tools 字段，避免干扰无工具的普通对话
     if (tools && tools.length > 0) body.tools = tools;
     return this.fetchImpl(`${this.baseURL}/chat/completions`, {

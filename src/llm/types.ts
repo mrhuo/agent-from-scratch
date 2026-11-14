@@ -62,6 +62,9 @@ export interface ChatOptions {
   maxTokens?: number;
   /** 是否流式返回，默认 false */
   stream?: boolean;
+  /** 是否要求模型只输出 JSON（OpenAI/DeepSeek 兼容的 json_object 模式）；
+   *  供规划器等需要结构化输出的场景使用；解析侧另有容错兜底 */
+  jsonMode?: boolean;
 }
 
 export interface ChatConfig {

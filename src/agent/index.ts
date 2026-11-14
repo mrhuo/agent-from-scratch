@@ -9,3 +9,6 @@ export type { ToolErrorKind } from "./tools.js";
 export { ToolRegistry } from "./registry.js";
 export { zodToJsonSchema } from "./schema.js";
 export type { JsonSchema } from "./schema.js";
+
+export { Planner } from "../planning/index.js";
+export type { Plan, StepResult, PlanRunResult } from "../planning/types.js";
