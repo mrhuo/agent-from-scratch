@@ -10,14 +10,22 @@ import { MemoryStore } from "./memory/MemoryStore.js";
 import { ContextCompressor, LLMSummarizer } from "./memory/ContextCompressor.js";
 import { createRememberTool, createRecallTool } from "./tools/memory.js";
 import { Planner } from "./planning/index.js";
+import {
+  Orchestrator,
+  RESEARCHER,
+  WRITER,
+  REVIEWER,
+  type AgentRole,
+  type CollaborationResult,
+} from "./orchestrator/index.js";
 import { join } from "node:path";
 import * as readline from "node:readline";
 
 /**
- * 第 6 篇配套 demo：在「思考 → 行动 → 观察」循环之上，加上两种记忆。
- *  - 短期记忆：历史轮次超阈值时自动摘要，防止上下文溢出窗口。
- *  - 长期记忆：remember / recall 两个工具把事实落盘到 data/memory.json，
- *    并自动把与本轮问题相关的事实注入 system 提示，跨会话都记得住。
+ * 演示入口（累计到第 8 篇）：
+ *  - 直接输入：走 Agent Loop（含第 6 篇的短期压缩 + 长期记忆注入）。
+ *  - /plan：第 7 篇的规划执行模式（Planner 拆步骤 → 分步执行 → 汇总）。
+ *  - /team：第 8 篇的多 Agent 协作（串行流水线 / 并行分派 + 汇总）。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -56,6 +64,24 @@ async function main(): Promise<void> {
     createRecallTool(memoryStore),
   ]);
   const agent = new Agent(client, { registry, maxSteps: 8, compressor, memoryStore, planner });
+
+  // 第 8 篇：协调者。把全部工具交给它，由它按角色白名单分发给每个 Worker。
+  const orchestrator = new Orchestrator(client, {
+    tools: [...allTools, createRememberTool(memoryStore), createRecallTool(memoryStore)],
+    memoryStore,
+    compressor,
+    maxSteps: 8,
+  });
+
+  /** 打印一次协作结果：各成员产出 + 最终答复 */
+  function printCollaboration(result: CollaborationResult): void {
+    console.log("\n【团队协作·各成员产出】");
+    result.results.forEach((r, idx) => {
+      console.log(`  ${idx + 1}. ${r.title}（${r.role}）`);
+      console.log(`     ${r.answer}`);
+    });
+    console.log(`【协调者汇总】${result.finalAnswer}\n`);
+  }
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   // 用 line 事件 + 队列，避免 question 在异步 await 期间因管道 EOF 关闭而抛 ERR_USE_AFTER_CLOSE。
@@ -121,6 +147,33 @@ async function main(): Promise<void> {
       );
       if (result.revisions > 0) console.log(`【重规划】发生了 ${result.revisions} 次`);
       console.log(`【最终答复】${result.answer}\n`);
+      continue;
+    }
+
+    // 第 8 篇新增：/team 进入「多 Agent 协作」模式
+    if (text === "/team") {
+      process.stdout.write("请输入交给团队的任务：");
+      const taskLine = await nextLine();
+      if (taskLine === null) break;
+      const task = taskLine.trim();
+      if (!task) continue;
+      console.log("选择协作模式：1=串行流水线（调研→写作→审核）  2=并行分派（默认 1）");
+      const modeLine = await nextLine();
+      const mode = modeLine?.trim() ?? "1";
+
+      if (mode === "2") {
+        // 并行：两个独立子任务同时推进——调研本地资料 + 检索关键词，再汇总
+        const result = await orchestrator.runParallel([
+          { role: RESEARCHER, task: `${task}（侧重：梳理本地资料里的相关事实）` },
+          { role: REVIEWER, task: `${task}（侧重：从证据充分性角度做独立审查）` },
+        ]);
+        printCollaboration(result);
+      } else {
+        // 串行：调研 → 写作 → 审核，前序产出传给后序
+        const roles: AgentRole[] = [RESEARCHER, WRITER, REVIEWER];
+        const result = await orchestrator.runPipeline(task, roles);
+        printCollaboration(result);
+      }
       continue;
     }
 

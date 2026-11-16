@@ -19,14 +19,14 @@
 | 05 | 多工具协作：串行编排与并行执行 | ✅ 已完成 |
 | 06 | 记忆的两种形态（短期 / 长期） | ✅ 已完成 |
 | 07 | 会规划：Plan-and-Execute | ✅ 已完成 |
-| 08 | 多 Agent 协作 | 规划中 |
+| 08 | 多 Agent 协作（同一内核 + 角色白名单 + 协调者） | ✅ 已完成 |
 | 09 | 接外部世界：MCP 实战 | 规划中 |
 | 10 | 让 Agent 可信：权限 / 沙箱 / 人工介入 | 规划中 |
 | 11 | 持久化与恢复：会话、状态、崩溃续跑 | 规划中 |
 | 12 | 上线与可观测 | 规划中 |
 | 13 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | 规划中 |
 
-> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）；第 6 篇补齐两种记忆——短期记忆用 ContextCompressor 在历史超阈值时摘要、保真最近轮次，长期记忆用 MemoryStore 落盘 + remember/recall 工具 + 每轮检索注入，二者均通过组合接入、内核循环零改动；第 7 篇在 ReAct 循环之上叠加 Plan-and-Execute——用 Planner 把任务拆成有序步骤（JSON 模式 + 容错解析），runPlan 让每步独立跑一遍 ReAct 子循环（可调用工具），最后由中性提示终步合成，某步撞预算未收敛时有限次 revisePlan 重规划剩余步骤，规划与执行通过组合接入、内核循环零改动。每篇博文对应一个 `post-NN` tag。
+> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）；第 6 篇补齐两种记忆——短期记忆用 ContextCompressor 在历史超阈值时摘要、保真最近轮次，长期记忆用 MemoryStore 落盘 + remember/recall 工具 + 每轮检索注入，二者均通过组合接入、内核循环零改动；第 7 篇在 ReAct 循环之上叠加 Plan-and-Execute——用 Planner 把任务拆成有序步骤（JSON 模式 + 容错解析），runPlan 让每步独立跑一遍 ReAct 子循环（可调用工具），最后由中性提示终步合成，某步撞预算未收敛时有限次 revisePlan 重规划剩余步骤，规划与执行通过组合接入、内核循环零改动；第 8 篇用一层薄薄的 Orchestrator 实现多 Agent 协作——每个 Worker 就是已有的 Agent 实例，换 systemPrompt 与工具白名单即是换角色，runPipeline 用前序产出交接实现串行流水线，runParallel 用 Promise.all 并行推进独立子任务再由中性提示汇总，真实演示中审核员独立发现并纠正了写手的事实性错误，既有能力零改动复用。每篇博文对应一个 `post-NN` tag。
 
 每篇博文在 `posts/NN.md`，配套代码增量在 `src/` 对应目录。
 
@@ -78,9 +78,10 @@ git checkout post-04   # 回到第 4 篇（真工具：readFile / searchFiles / 
 git checkout post-05   # 回到第 5 篇（多工具协作：并行执行 + 串行编排）完成时的代码
 git checkout post-06   # 回到第 6 篇（记忆的两种形态：短期压缩 + 长期持久化）完成时的代码
 git checkout post-07   # 回到第 7 篇（会规划：Plan-and-Execute）完成时的代码
+git checkout post-08   # 回到第 8 篇（多 Agent 协作：角色白名单 + 串行流水线 / 并行分派）完成时的代码
 ```
 
-后续章节发布后会追加 `post-08`、`post-09` …… 以此类推。
+后续章节发布后会追加 `post-09`、`post-10` …… 以此类推。
 
 ## 目录结构
 
@@ -94,7 +95,7 @@ agent-from-scratch/
 │  ├─ agent/             # 篇02-03：Agent Loop + Tool 系统（ToolRegistry / Zod schema / ToolError）
 │  ├─ tools/             # 篇04 起：搜索 / 计算 / 读文件等真工具
 │  ├─ memory/            # 篇06：短/长期记忆
-│  ├─ planner/           # 篇07：任务树
+│  ├─ planning/          # 篇07：Planner 任务拆解与重规划
 │  ├─ orchestrator/      # 篇08：多 Agent
 │  ├─ mcp/               # 篇09：client + server
 │  ├─ sandbox/           # 篇10：权限与沙箱
