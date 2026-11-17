@@ -118,3 +118,134 @@ function convert(s: z.ZodTypeAny): JsonSchema {
   // 兜底：未知类型当作自由字符串，保证生成的 schema 始终合法
   return withDesc(s, { type: "string" });
 }
+
+/**
+ * 用原生 JSON Schema 校验一组参数。
+ *
+ * 为什么需要它：第 3 篇确立了「参数用 Zod 定义一次，校验与喂给模型的 schema 同源」。
+ * 但第 9 篇接的 MCP 工具，参数 schema 是**外部服务给定的**，我们既不能改写它，
+ * 也不该把它转成 Zod（转换本身就是一层可能出错的翻译）。于是对这类工具，
+ * 校验直接按它自带的 JSON Schema 走——这正是 JSON Schema 的本职。
+ *
+ * 覆盖 MCP inputSchema 的常用子集：object / string / number / integer / boolean /
+ * array / object / enum / required / additionalProperties。
+ */
+export interface JsonSchemaCheck {
+  ok: boolean;
+  errors: string[];
+}
+
+export function validateAgainstJsonSchema(schema: JsonSchema, args: unknown): JsonSchemaCheck {
+  const errors: string[] = [];
+
+  // 顶层按对象处理（MCP 工具的参数一律是对象）
+  if (schema.type === "object" || schema.properties) {
+    if (typeof args !== "object" || args === null || Array.isArray(args)) {
+      return { ok: false, errors: ["(root): 参数必须是 JSON 对象"] };
+    }
+    const obj = args as Record<string, unknown>;
+    const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
+    const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
+
+    for (const key of required) {
+      if (!(key in obj) || obj[key] === undefined) {
+        errors.push(`${key}: 缺少必填参数`);
+      }
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      const sub = properties[key];
+      if (!sub) {
+        if (schema.additionalProperties === false) {
+          errors.push(`${key}: 不允许的额外参数`);
+        }
+        continue;
+      }
+      errors.push(...checkValue(sub, value, key));
+    }
+    return { ok: errors.length === 0, errors };
+  }
+
+  // 非对象类型的顶层 schema：只做一次类型检查
+  errors.push(...checkValue(schema, args, "(root)"));
+  return { ok: errors.length === 0, errors };
+}
+
+/** 按单个属性的 JSON Schema 检查一个值 */
+function checkValue(schema: JsonSchema, value: unknown, path: string): string[] {
+  const errors: string[] = [];
+
+  const types = Array.isArray(schema.type)
+    ? (schema.type as string[])
+    : schema.type
+      ? [schema.type as string]
+      : [];
+
+  if (types.length > 0) {
+    const matched = types.some((t) => matchesType(t, value));
+    if (!matched) {
+      errors.push(`${path}: 类型应为 ${types.join(" 或 ")}，实际是 ${typeName(value)}`);
+      return errors; // 类型都不对，后面的约束检查没有意义
+    }
+  }
+
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value as never)) {
+    errors.push(`${path}: 取值必须是 ${JSON.stringify(schema.enum)} 之一`);
+  }
+
+  if (Array.isArray(value)) {
+    const items = schema.items as JsonSchema | undefined;
+    if (items) {
+      value.forEach((item, idx) => {
+        errors.push(...checkValue(items, item, `${path}[${idx}]`));
+      });
+    }
+  }
+
+  if (schema.type === "object" && isPlainObject(value)) {
+    const obj = value as Record<string, unknown>;
+    const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
+    const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
+    for (const key of required) {
+      if (!(key in obj) || obj[key] === undefined) {
+        errors.push(`${path}.${key}: 缺少必填参数`);
+      }
+    }
+    for (const [key, v] of Object.entries(obj)) {
+      const sub = properties[key];
+      if (sub) errors.push(...checkValue(sub, v, `${path}.${key}`));
+    }
+  }
+
+  return errors;
+}
+
+function matchesType(type: string, value: unknown): boolean {
+  switch (type) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return isPlainObject(value);
+    case "null":
+      return value === null;
+    default:
+      return true; // 未知类型不做限制，避免误杀
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function typeName(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}

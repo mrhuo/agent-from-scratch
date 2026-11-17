@@ -1,5 +1,5 @@
 import { calculator } from "../agent/tools.js";
-import type { Tool } from "../agent/tools.js";
+import type { AnyTool } from "../agent/tools.js";
 import { readFile } from "./readFile.js";
 import { searchFiles } from "./searchFiles.js";
 import { webFetch } from "./webFetch.js";
@@ -15,4 +15,4 @@ export { DATA_ROOT } from "./root.js";
  * 演示入口（src/index.ts）只需 `new ToolRegistry().registerAll(allTools)`，
  * Agent 内核一行都不用改。
  */
-export const allTools: Tool<any>[] = [calculator, readFile, searchFiles, webFetch];
+export const allTools: AnyTool[] = [calculator, readFile, searchFiles, webFetch];

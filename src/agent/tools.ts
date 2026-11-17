@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ToolDefinition } from "../llm/types.js";
-import { zodToJsonSchema } from "./schema.js";
+import { zodToJsonSchema, type JsonSchema } from "./schema.js";
 
 /**
  * 一个工具的高层定义。
@@ -21,6 +21,33 @@ export interface Tool<T extends z.ZodTypeAny = z.ZodTypeAny> {
   execute: (args: z.infer<T>) => Promise<string> | string;
 }
 
+/**
+ * 外部工具：参数 schema 由**外部服务给定**，本项目不重新定义。
+ *
+ * 第 9 篇接入 MCP 时引入：MCP 服务端给每个工具附一份 JSON Schema（inputSchema），
+ * 我们既改不了它，也不该把它翻译成 Zod（翻译层本身就是可能出错的额外代码）。
+ * 于是这类工具的校验直接按它自带的 JSON Schema 走——JSON Schema 本来就是干这个的。
+ *
+ * 对比：
+ *  - `Tool`   —— 本项目自己写的工具，参数用 Zod 定义一次（校验与 schema 同源）；
+ *  - `RawTool`—— 外部工具，参数用服务端给的 JSON Schema（我们只做消费方）。
+ */
+export interface RawTool {
+  name: string;
+  description: string;
+  /** 外部给定的 JSON Schema（原生），直接喂给模型 */
+  parameters: JsonSchema;
+  execute: (args: Record<string, unknown>) => Promise<string> | string;
+}
+
+/** 注册表可容纳的两种工具 */
+export type AnyTool = Tool<any> | RawTool;
+
+/** 判断一个工具是「原生 JSON Schema 工具」还是「Zod 工具」 */
+export function isRawTool(tool: AnyTool): tool is RawTool {
+  return typeof (tool.parameters as { safeParse?: unknown }).safeParse !== "function";
+}
+
 /** 工具执行失败的分类：找不到 / 参数不合法 / 执行抛异常 */
 export type ToolErrorKind = "not_found" | "validation" | "execution";
 
@@ -35,16 +62,18 @@ export class ToolError extends Error {
 }
 
 /**
- * 把高层 Tool 转成发给模型的 ToolDefinition。
- * parameters 由 Zod schema 自动生成 JSON Schema，模型不需要知道怎么执行。
+ * 把高层工具转成发给模型的 ToolDefinition。
+ * Zod 工具的 parameters 由 Zod schema 自动生成 JSON Schema；
+ * 原生工具的 parameters 直接沿用外部给定的 JSON Schema。
+ * 两种工具对模型来说形态完全一致——模型只认 function calling 的标准结构。
  */
-export function toDefinition(tool: Tool<any>): ToolDefinition {
+export function toDefinition(tool: AnyTool): ToolDefinition {
   return {
     type: "function",
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: zodToJsonSchema(tool.parameters),
+      parameters: isRawTool(tool) ? tool.parameters : zodToJsonSchema(tool.parameters),
     },
   };
 }

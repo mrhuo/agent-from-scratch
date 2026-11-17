@@ -1,7 +1,7 @@
 import type { LLMClient } from "../llm/index.js";
 import type { Message } from "../llm/types.js";
 import { Agent, ToolRegistry } from "../agent/index.js";
-import type { Tool } from "../agent/tools.js";
+import type { AnyTool } from "../agent/tools.js";
 import type { ContextCompressor } from "../memory/ContextCompressor.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
 import type {
@@ -27,7 +27,7 @@ export class Orchestrator {
     private readonly client: LLMClient,
     private readonly options: {
       /** 全部可用工具，createWorker 时按角色白名单取子集 */
-      tools?: Tool<any>[];
+      tools?: AnyTool[];
       /** 记忆与压缩能力按角色透传给每个 Worker（可选） */
       memoryStore?: MemoryStore;
       compressor?: ContextCompressor;

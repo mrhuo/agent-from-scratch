@@ -1,6 +1,6 @@
 import type { LLMClient } from "../llm/index.js";
 import type { ChatResult, Message, ToolCall } from "../llm/types.js";
-import { calculator, type Tool } from "./tools.js";
+import { calculator, type AnyTool } from "./tools.js";
 import { ToolRegistry } from "./registry.js";
 import type { ContextCompressor } from "../memory/ContextCompressor.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
@@ -70,7 +70,7 @@ export class Agent {
   constructor(
     client: LLMClient,
     options: {
-      tools?: Tool<any>[];
+      tools?: AnyTool[];
       registry?: ToolRegistry;
       maxSteps?: number;
       systemPrompt?: string;

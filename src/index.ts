@@ -18,14 +18,16 @@ import {
   type AgentRole,
   type CollaborationResult,
 } from "./orchestrator/index.js";
+import { MCPClient, StdioTransport, toMCPTools, localBoardServerOptions } from "./mcp/index.js";
 import { join } from "node:path";
 import * as readline from "node:readline";
 
 /**
- * 演示入口（累计到第 8 篇）：
+ * 演示入口（累计到第 9 篇）：
  *  - 直接输入：走 Agent Loop（含第 6 篇的短期压缩 + 长期记忆注入）。
  *  - /plan：第 7 篇的规划执行模式（Planner 拆步骤 → 分步执行 → 汇总）。
  *  - /team：第 8 篇的多 Agent 协作（串行流水线 / 并行分派 + 汇总）。
+ *  - /mcp：第 9 篇的 MCP 接入（拉起本地 MCP 服务端 → 发现工具 → 交给 Agent 调用）。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -177,8 +179,55 @@ async function main(): Promise<void> {
       continue;
     }
 
-    if (!process.stdin.isTTY) process.stdout.write(`${text}\n`);
+    // 第 9 篇新增：/mcp 进入「MCP 接入」模式
+    // 四步走：拉起服务端子进程 → initialize 握手 → tools/list 发现工具 → 注册进 Agent
+    if (text === "/mcp") {
+      process.stdout.write("请输入要交给 Agent 的任务：");
+      const taskLine = await nextLine();
+      if (taskLine === null) break;
+      const task = taskLine.trim();
+      if (!task) continue;
 
+      const transport = new StdioTransport(localBoardServerOptions());
+      const mcpClient = new MCPClient(transport, { clientName: "agent-from-scratch" });
+      try {
+        const info = await mcpClient.connect();
+        console.log(`\n【MCP 握手】已连接服务端 ${info.name} v${info.version}（协议 ${info.protocolVersion}）`);
+
+        const mcpTools = await toMCPTools(mcpClient);
+        console.log(`【工具发现】发现 ${mcpTools.length} 个外部工具：`);
+        mcpTools.forEach((t) => console.log(`  - ${t.name}`));
+
+        // MCP 工具与本地工具进同一个注册表——Agent 内核一行都不用改。
+        // systemPrompt 补充一句说明，模型才知道这些带 mcp__ 前缀的工具是外部来的。
+        const mcpRegistry = new ToolRegistry().registerAll([...allTools, ...mcpTools]);
+        const mcpAgent = new Agent(client, {
+          registry: mcpRegistry,
+          maxSteps: 8,
+          compressor,
+          memoryStore,
+          planner,
+          systemPrompt:
+            "你是一个会使用工具的智能助手。你拥有若干工具，可以用 calculator 做算术，" +
+            "用 readFile 读本地资料、用 searchFiles 检索、用 webFetch 抓网页，" +
+            "还可以调用以 mcp__ 开头的外部工具（例如任务看板服务）来管理任务。" +
+            "需要用到这些能力时优先调用工具，拿到观察结果后再回答。",
+        });
+
+        const { answer, steps } = await mcpAgent.run(task);
+        for (const step of steps) {
+          console.log(`  [${STEP_LABEL[step.kind]}] ${step.text}`);
+        }
+        console.log(`助手：${answer}`);
+      } finally {
+        // 无论成功失败都要收掉子进程，否则 Node 会挂住不退出
+        mcpClient.close();
+      }
+      console.log();
+      continue;
+    }
+
+    if (!process.stdin.isTTY) process.stdout.write(`${text}\n`);
     const { answer, steps } = await agent.run(text);
     for (const step of steps) {
       console.log(`  [${STEP_LABEL[step.kind]}] ${step.text}`);
