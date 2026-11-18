@@ -5,7 +5,7 @@ dotenv.config({ override: true });
 import { LLMClient } from "./llm/index.js";
 import { Agent, ToolRegistry } from "./agent/index.js";
 import type { AgentStep } from "./agent/index.js";
-import { allTools } from "./tools/index.js";
+import { allTools, dangerousTools } from "./tools/index.js";
 import { MemoryStore } from "./memory/MemoryStore.js";
 import { ContextCompressor, LLMSummarizer } from "./memory/ContextCompressor.js";
 import { createRememberTool, createRecallTool } from "./tools/memory.js";
@@ -19,15 +19,23 @@ import {
   type CollaborationResult,
 } from "./orchestrator/index.js";
 import { MCPClient, StdioTransport, toMCPTools, localBoardServerOptions } from "./mcp/index.js";
+import {
+  ToolGuard,
+  FileAuditLog,
+  ConsoleApprover,
+  defaultSandboxPolicy,
+  defaultFileSandbox,
+} from "./sandbox/index.js";
 import { join } from "node:path";
 import * as readline from "node:readline";
 
 /**
- * 演示入口（累计到第 9 篇）：
+ * 演示入口（累计到第 10 篇）：
  *  - 直接输入：走 Agent Loop（含第 6 篇的短期压缩 + 长期记忆注入）。
  *  - /plan：第 7 篇的规划执行模式（Planner 拆步骤 → 分步执行 → 汇总）。
  *  - /team：第 8 篇的多 Agent 协作（串行流水线 / 并行分派 + 汇总）。
  *  - /mcp：第 9 篇的 MCP 接入（拉起本地 MCP 服务端 → 发现工具 → 交给 Agent 调用）。
+ *  - /safe：第 10 篇的受限模式（参数级权限 + 路径沙箱 + 人工审批 + 审计日志）。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -66,6 +74,33 @@ async function main(): Promise<void> {
     createRecallTool(memoryStore),
   ]);
   const agent = new Agent(client, { registry, maxSteps: 8, compressor, memoryStore, planner });
+
+  // 第 10 篇：受限模式的一套组件。
+  //  - 策略：参数级规则，默认拒绝兜底；
+  //  - 沙箱：文件类工具只能碰 data/ 目录下的文本文件；
+  //  - 审批：高风险操作问人（终端交互，超时按拒绝）；
+  //  - 审计：每次决策都写 data/audit.jsonl。
+  const auditLog = new FileAuditLog({ file: join(process.cwd(), "data", "audit.jsonl") });
+  const sandboxGuard = new ToolGuard({
+    policy: defaultSandboxPolicy({ fileSandbox: defaultFileSandbox() }),
+    approver: new ConsoleApprover({ timeoutMs: 60_000 }),
+    audit: auditLog,
+    source: "safe-mode",
+  });
+  const safeRegistry = new ToolRegistry()
+    .registerAll([...allTools, ...dangerousTools])
+    .setGuard(sandboxGuard);
+  const safeAgent = new Agent(client, {
+    registry: safeRegistry,
+    maxSteps: 8,
+    compressor,
+    memoryStore,
+    planner,
+    systemPrompt:
+      "你是一个在受限沙箱里运行的助手。你可以读本地资料、算数、写文件、删文件、执行少量本地命令。" +
+      "写文件、删文件、执行命令会触发人工审批，若收到 [权限拒绝·…] 开头的观察结果，" +
+      "不要重试同一个操作，如实说明这一步没有完成。",
+  });
 
   // 第 8 篇：协调者。把全部工具交给它，由它按角色白名单分发给每个 Worker。
   const orchestrator = new Orchestrator(client, {
@@ -122,6 +157,8 @@ async function main(): Promise<void> {
     });
 
   console.log("Agent 对话开始（输入 exit 退出）");
+  // 当前是否处于第 10 篇的受限模式（/safe 切换）
+  let useSafe = false;
   while (true) {
     // 用户输入统一加「你：」前缀，与助手回复的「助手：」对称，便于阅读多轮对话。
     process.stdout.write("你：");
@@ -227,8 +264,24 @@ async function main(): Promise<void> {
       continue;
     }
 
+    // 第 10 篇新增：/safe 切换到受限模式（参数级权限 + 沙箱 + 人工审批 + 审计）
+    if (text === "/safe") {
+      useSafe = true;
+      console.log(
+        "\n已进入受限模式：读写文件、删文件、执行命令都要过权限策略与人工审批；" +
+          "审计写入 data/audit.jsonl。\n（输入 /unsafe 可切回普通模式）\n",
+      );
+      continue;
+    }
+    if (text === "/unsafe") {
+      useSafe = false;
+      console.log("\n已切回普通模式\n");
+      continue;
+    }
+
     if (!process.stdin.isTTY) process.stdout.write(`${text}\n`);
-    const { answer, steps } = await agent.run(text);
+    const activeAgent = useSafe ? safeAgent : agent;
+    const { answer, steps } = await activeAgent.run(text);
     for (const step of steps) {
       console.log(`  [${STEP_LABEL[step.kind]}] ${step.text}`);
     }

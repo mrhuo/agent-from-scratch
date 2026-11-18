@@ -6,5 +6,9 @@ dist/
 .DS_Store
 data/memory.json
 data/board.json
+data/audit.jsonl
+data/summary.txt
+data/sandbox-trace.txt
+data/sandbox-verify.txt
+data/sandbox-*.html
 .workbuddy/
-

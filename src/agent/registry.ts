@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "../llm/types.js";
 import { formatZodError, isRawTool, toDefinition, type AnyTool } from "./tools.js";
 import { validateAgainstJsonSchema } from "./schema.js";
+import { PermissionDeniedError, type ToolGuard } from "../sandbox/index.js";
 
 /**
  * 工具注册表：Agent 持有的「工具箱」。
@@ -16,9 +17,16 @@ import { validateAgainstJsonSchema } from "./schema.js";
  *  - Zod 工具（本项目自己写的）：参数用 Zod 校验，失败信息来自 ZodError；
  *  - 原生工具（外部给的，如 MCP）：参数按其自带的 JSON Schema 校验。
  * 两条校验路径共用同一个观察文本格式，模型看到的东西完全一致。
+ *
+ * 第 10 篇起，注册表多了一道**授权关卡**（guard）：
+ * 参数校验通过之后、真正执行之前，每一次调用都要先过权限策略。
+ * 校验在前、授权在后是有意为之——参数不合法时不该去打扰人审批，
+ * 人只该为「格式正确但有风险」的调用买单。
  */
 export class ToolRegistry {
   private readonly tools = new Map<string, AnyTool>();
+  /** 授权关卡；不配置则不做任何权限检查（保持第 3 篇的默认行为） */
+  private guard?: ToolGuard;
 
   /** 注册一个工具；同名重复注册直接报错，避免悄悄覆盖 */
   register(tool: AnyTool): this {
@@ -33,6 +41,17 @@ export class ToolRegistry {
   registerAll(tools: AnyTool[]): this {
     for (const t of tools) this.register(t);
     return this;
+  }
+
+  /** 装上授权关卡 */
+  setGuard(guard: ToolGuard): this {
+    this.guard = guard;
+    return this;
+  }
+
+  /** 当前是否已启用权限检查 */
+  hasGuard(): boolean {
+    return this.guard !== undefined;
   }
 
   get(name: string): AnyTool | undefined {
@@ -58,6 +77,7 @@ export class ToolRegistry {
    * 任何失败都被分类并转成文本，绝不让异常逃逸：
    *  - 找不到工具 → [工具错误·not_found]
    *  - 参数校验失败 → [工具错误·validation]（带具体字段错误，模型可据此纠正）
+   *  - 权限拒绝 → [权限拒绝·策略] / [权限拒绝·人工驳回]
    *  - 执行抛异常 → [工具错误·execution]
    * 这样 Agent 循环即使工具不可靠也能继续，模型下一圈能看到失败原因。
    */
@@ -84,8 +104,19 @@ export class ToolRegistry {
     }
 
     try {
-      return String(await tool.execute(args as never));
+      // 有授权关卡时，调用必须先过策略；被拒会抛 PermissionDeniedError，
+      // 下面单独归类成「权限拒绝」，与「工具执行失败」区分开。
+      const result = this.guard
+        ? await this.guard.execute(name, args as Record<string, unknown>, () =>
+            tool.execute(args as never),
+          )
+        : await tool.execute(args as never);
+      return String(result);
     } catch (err) {
+      if (err instanceof PermissionDeniedError) {
+        const tag = err.kind === "approval" ? "人工驳回" : "策略拒绝";
+        return `[权限拒绝·${tag}] ${err.message}`;
+      }
       const message = err instanceof Error ? err.message : String(err);
       return `[工具错误·execution] 工具 "${name}" 执行异常：${message}`;
     }
