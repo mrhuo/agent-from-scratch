@@ -26,16 +26,18 @@ import {
   defaultSandboxPolicy,
   defaultFileSandbox,
 } from "./sandbox/index.js";
+import { SessionStore, ResumableAgent } from "./persistence/index.js";
 import { join } from "node:path";
 import * as readline from "node:readline";
 
 /**
- * 演示入口（累计到第 10 篇）：
+ * 演示入口（累计到第 11 篇）：
  *  - 直接输入：走 Agent Loop（含第 6 篇的短期压缩 + 长期记忆注入）。
  *  - /plan：第 7 篇的规划执行模式（Planner 拆步骤 → 分步执行 → 汇总）。
  *  - /team：第 8 篇的多 Agent 协作（串行流水线 / 并行分派 + 汇总）。
  *  - /mcp：第 9 篇的 MCP 接入（拉起本地 MCP 服务端 → 发现工具 → 交给 Agent 调用）。
  *  - /safe：第 10 篇的受限模式（参数级权限 + 路径沙箱 + 人工审批 + 审计日志）。
+ *  - /resume：第 11 篇的会话恢复（从快照 + 事件日志重建上下文，幂等处理在途工具调用）。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -159,6 +161,8 @@ async function main(): Promise<void> {
   console.log("Agent 对话开始（输入 exit 退出）");
   // 当前是否处于第 10 篇的受限模式（/safe 切换）
   let useSafe = false;
+  // 第 11 篇：恢复出的会话拥有独立的 Agent 实例与持久化钩子，后续对话走它
+  let resumedAgent: ResumableAgent | undefined;
   while (true) {
     // 用户输入统一加「你：」前缀，与助手回复的「助手：」对称，便于阅读多轮对话。
     process.stdout.write("你：");
@@ -176,7 +180,9 @@ async function main(): Promise<void> {
       const task = taskLine.trim();
       if (!task) continue;
 
-      const result = await agent.runPlan(task);
+      const result = resumedAgent
+        ? await resumedAgent.runPlan(task)
+        : await agent.runPlan(task);
       console.log("\n【规划】");
       console.log(`  目标：${result.plan.goal}`);
       result.plan.steps.forEach((s, idx) => console.log(`  ${idx + 1}. ${s}`));
@@ -279,9 +285,70 @@ async function main(): Promise<void> {
       continue;
     }
 
+    if (text === "/unsafe") {
+      useSafe = false;
+      console.log("\n已切回普通模式\n");
+      continue;
+    }
+
+    // 第 11 篇新增：/resume 从磁盘恢复一个会话，之后的所有输入走恢复出的 Agent。
+    if (text === "/resume" || text.startsWith("/resume ")) {
+      const sessionsDir = join(process.cwd(), "data", "sessions");
+      const requested = text.slice("/resume".length).trim();
+      const sessions = SessionStore.list(sessionsDir);
+      const sessionId = requested || sessions[0]?.id;
+      if (!sessionId) {
+        console.log("\n没有找到可恢复的会话。先用 /persist 跑一轮，再执行 /resume。\n");
+        continue;
+      }
+      const freshAgent = new Agent(client, {
+        registry,
+        maxSteps: 8,
+        compressor,
+        memoryStore,
+        planner,
+      });
+      const store = new SessionStore({ dir: sessionsDir, sessionId, model: process.env.MODEL });
+      resumedAgent = new ResumableAgent({ agent: freshAgent, registry, store });
+      const report = await resumedAgent.resume();
+      console.log("\n【会话恢复】");
+      console.log(`  会话：${sessionId}，状态：${report.status}`);
+      console.log(`  重放事件 ${report.replayedEvents} 条，恢复消息 ${report.messageCount} 条`);
+      console.log(`  只读重放：${report.replayedCalls.join(", ") || "（无）"}`);
+      console.log(`  跳过重放：${report.uncertainCalls.join(", ") || "（无）"}`);
+      for (const w of report.warnings) console.log(`  警告：${w}`);
+      if (report.plan) {
+        console.log(
+          `  计划进度：${report.plan.index}/${report.plan.steps.length} 步已完成（` +
+            `${report.plan.goal}）`,
+        );
+      }
+      console.log("  后续输入将写入这个会话。\n");
+      continue;
+    }
+
+    // 第 11 篇新增：/persist 进入持久化模式，每轮写入会话快照
+    if (text === "/persist") {
+      useSafe = false;
+      const sessionsDir = join(process.cwd(), "data", "sessions");
+      const freshAgent = new Agent(client, {
+        registry,
+        maxSteps: 8,
+        compressor,
+        memoryStore,
+        planner,
+      });
+      const store = new SessionStore({ dir: sessionsDir, model: process.env.MODEL });
+      resumedAgent = new ResumableAgent({ agent: freshAgent, registry, store });
+      console.log(`\n已进入持久化模式：会话 ${store.sessionId}，目录 ${store.dir}。`);
+      console.log("每轮结束自动打快照；新开进程输入 /resume <会话ID> 可恢复。\n");
+      continue;
+    }
+
     if (!process.stdin.isTTY) process.stdout.write(`${text}\n`);
-    const activeAgent = useSafe ? safeAgent : agent;
-    const { answer, steps } = await activeAgent.run(text);
+    const { answer, steps } = resumedAgent
+      ? await resumedAgent.run(text)
+      : await (useSafe ? safeAgent : agent).run(text);
     for (const step of steps) {
       console.log(`  [${STEP_LABEL[step.kind]}] ${step.text}`);
     }

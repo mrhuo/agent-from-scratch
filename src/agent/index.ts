@@ -1,5 +1,5 @@
 export { Agent, calculator } from "./Agent.js";
-export type { AgentStep, AgentRunResult, StepKind } from "./Agent.js";
+export type { AgentStep, AgentRunResult, StepKind, AgentHooks } from "./Agent.js";
 
 export type { Tool, RawTool, AnyTool } from "./tools.js";
 export { evalArithmetic, toDefinition, formatZodError, isRawTool } from "./tools.js";

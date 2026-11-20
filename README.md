@@ -22,11 +22,11 @@
 | 08 | 多 Agent 协作（同一内核 + 角色白名单 + 协调者） | ✅ 已完成 |
 | 09 | 接外部世界：MCP 实战（手写客户端 + 服务端） | ✅ 已完成 |
 | 10 | 让 Agent 可信：权限 / 沙箱 / 人工介入 | ✅ 已完成 |
-| 11 | 持久化与恢复：会话、状态、崩溃续跑 | 规划中 |
+| 11 | 持久化与恢复：会话、状态、崩溃续跑 | ✅ 已完成 |
 | 12 | 上线与可观测 | 规划中 |
 | 13 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | 规划中 |
 
-> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）；第 6 篇补齐两种记忆——短期记忆用 ContextCompressor 在历史超阈值时摘要、保真最近轮次，长期记忆用 MemoryStore 落盘 + remember/recall 工具 + 每轮检索注入，二者均通过组合接入、内核循环零改动；第 7 篇在 ReAct 循环之上叠加 Plan-and-Execute——用 Planner 把任务拆成有序步骤（JSON 模式 + 容错解析），runPlan 让每步独立跑一遍 ReAct 子循环（可调用工具），最后由中性提示终步合成，某步撞预算未收敛时有限次 revisePlan 重规划剩余步骤，规划与执行通过组合接入、内核循环零改动；第 8 篇用一层薄薄的 Orchestrator 实现多 Agent 协作——每个 Worker 就是已有的 Agent 实例，换 systemPrompt 与工具白名单即是换角色，runPipeline 用前序产出交接实现串行流水线，runParallel 用 Promise.all 并行推进独立子任务再由中性提示汇总，真实演示中审核员独立发现并纠正了写手的事实性错误，既有能力零改动复用；第 9 篇接上外部世界——不引 MCP SDK，手写 JSON-RPC 2.0 协议层、stdio 子进程传输、客户端握手与工具发现、服务端核心与一个有状态的任务看板服务；工具箱新增「原生工具」一类，参数 schema 由服务端给定、按 JSON Schema 校验，与本地 Zod 工具共用同一套定义与观察格式，Agent 内核零改动；第 10 篇给 Agent 装上边界——参数级权限（决策看参数值而非只看工具名，allow/deny/ask 三态）、工具自带的硬沙箱（根目录 / 扩展名 / 大小 / 符号链接四道边界）、人工介入（超时、审批器异常、没有审批人一律按拒绝处理）与 JSONL 审计日志，授权关卡插在 ToolRegistry 与工具实现之间，Agent 内核依旧零改动。每篇博文对应一个 `post-NN` tag。
+> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）；第 6 篇补齐两种记忆——短期记忆用 ContextCompressor 在历史超阈值时摘要、保真最近轮次，长期记忆用 MemoryStore 落盘 + remember/recall 工具 + 每轮检索注入，二者均通过组合接入、内核循环零改动；第 7 篇在 ReAct 循环之上叠加 Plan-and-Execute——用 Planner 把任务拆成有序步骤（JSON 模式 + 容错解析），runPlan 让每步独立跑一遍 ReAct 子循环（可调用工具），最后由中性提示终步合成，某步撞预算未收敛时有限次 revisePlan 重规划剩余步骤，规划与执行通过组合接入、内核循环零改动；第 8 篇用一层薄薄的 Orchestrator 实现多 Agent 协作——每个 Worker 就是已有的 Agent 实例，换 systemPrompt 与工具白名单即是换角色，runPipeline 用前序产出交接实现串行流水线，runParallel 用 Promise.all 并行推进独立子任务再由中性提示汇总，真实演示中审核员独立发现并纠正了写手的事实性错误，既有能力零改动复用；第 9 篇接上外部世界——不引 MCP SDK，手写 JSON-RPC 2.0 协议层、stdio 子进程传输、客户端握手与工具发现、服务端核心与一个有状态的任务看板服务；工具箱新增「原生工具」一类，参数 schema 由服务端给定、按 JSON Schema 校验，与本地 Zod 工具共用同一套定义与观察格式，Agent 内核零改动；第 10 篇给 Agent 装上边界——参数级权限（决策看参数值而非只看工具名，allow/deny/ask 三态）、工具自带的硬沙箱（根目录 / 扩展名 / 大小 / 符号链接四道边界）、人工介入（超时、审批器异常、没有审批人一律按拒绝处理）与 JSONL 审计日志，授权关卡插在 ToolRegistry 与工具实现之间，Agent 内核依旧零改动；第 11 篇把进程内状态搬到磁盘——会话快照（tmp + rename 原子写、.bak 回滚）加只追加事件日志（单调 seq、撕裂行容错）构成恢复数据源，重放时按 tool_call_id 幂等去重，只读调用可重放、有副作用的调用只标记不确定，计划进度也从事件重建并从下一个未完成步骤续跑。每篇博文对应一个 `post-NN` tag。
 
 每篇博文在 `posts/NN.md`，配套代码增量在 `src/` 对应目录。
 
@@ -60,7 +60,13 @@ npm test
 
 # 6. 类型检查
 npm run typecheck
+
+# 7. 持久化两阶段演示（需联网与 key；第一阶段以 exit(9) 结束属预期）
+npx tsx scripts/demo-persistence.ts run
+npx tsx scripts/demo-persistence.ts resume
 ```
+
+交互式入口支持 `/persist` 进入持久化模式、`/resume [会话ID]` 在新进程恢复。
 
 > 注意：DeepSeek 的 OpenAI 兼容地址是 `https://api.deepseek.com`（**不带 `/v1`**），与 OpenAI 官方的 `https://api.openai.com/v1` 不同。切换其他 provider 只需改 `.env` 的 `BASE_URL` 和 `MODEL`，Agent 内核无需改动。
 > 本地 `.env` 已被 `.gitignore` 忽略，不会进入提交。
@@ -81,9 +87,10 @@ git checkout post-07   # 回到第 7 篇（会规划：Plan-and-Execute）完成
 git checkout post-08   # 回到第 8 篇（多 Agent 协作：角色白名单 + 串行流水线 / 并行分派）完成时的代码
 git checkout post-09   # 回到第 9 篇（接外部世界：MCP 客户端 + 服务端）完成时的代码
 git checkout post-10   # 回到第 10 篇（让 Agent 可信：权限 / 沙箱 / 人工介入）完成时的代码
+git checkout post-11   # 回到第 11 篇（持久化与恢复：快照 / 事件日志 / 崩溃续跑）完成时的代码
 ```
 
-后续章节发布后会追加 `post-11`、`post-12` …… 以此类推。
+后续章节发布后会追加 `post-12`、`post-13` …… 以此类推。
 
 ## 目录结构
 
@@ -115,3 +122,6 @@ agent-from-scratch/
 - **权限默认拒绝**：策略无规则命中、规则求值异常、审批超时、审批器故障、没有审批人，五种情况一律按拒绝处理；被拒绝的调用返回结构化观察文本，模型能据此改道。
 - **沙箱与策略分工明确**：沙箱写在工具内部，是物理围栏；策略写在配置里，是可调的软门禁。门禁可以开后门，翻不出围栏。
 - **路径语义全局统一**：所有文件类工具的相对路径一律以沙箱根目录为基准，策略层判定的路径与工具实际访问的路径永远是同一个。
+- **快照 + 事件日志分工**：快照是定期存档点（原子替换、可回滚），事件日志是存档后的增量（同步追加、带序号、容错撕裂行）；恢复只读 `seq > lastSeq` 的事件。
+- **恢复只做对账，不做盲目重跑**：只读工具可安全重放；写文件、删文件、执行命令与外部 MCP 工具结果未落盘时一律不重跑，只写明确的「状态未知」观察。
+- **在途记录必须先于执行**：工具调用写盘失败就中止本轮，不能带着没有记录的状态继续执行。

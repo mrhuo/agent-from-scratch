@@ -5,7 +5,28 @@ import { ToolRegistry } from "./registry.js";
 import type { ContextCompressor } from "../memory/ContextCompressor.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
 import type { Planner } from "../planning/index.js";
+import type { Plan } from "../planning/types.js";
 import type { PlanRunResult, StepResult } from "../planning/types.js";
+import { randomUUID } from "node:crypto";
+
+/**
+ * 可观测钩子（第 11 篇加入）。
+ *
+ * 只在状态变化的边界上留几个点，不改变循环任何判断：用户输入、模型回复、
+ * 一次工具调用的发起与完成、一轮答复、以及规划器的四个节点。
+ * 不挂钩子时行为与第 10 篇完全一致。
+ */
+export interface AgentHooks {
+  onUserInput?(text: string): Promise<void> | void;
+  onAssistantMessage?(message: Message): Promise<void> | void;
+  /** 模型刚给出 tool_calls、工具还没执行——这是写「在途记录」的唯一正确时机 */
+  onToolCalls?(content: string | null, calls: ToolCall[], group: string): Promise<void> | void;
+  onToolResult?(call: ToolCall, observation: string): Promise<void> | void;
+  onFinalAnswer?(answer: string): Promise<void> | void;
+  onPlanCreated?(plan: Plan): Promise<void> | void;
+  onPlanStep?(index: number, step: string, result: StepResult): Promise<void> | void;
+  onPlanDone?(answer: string): Promise<void> | void;
+}
 
 export type StepKind = "thought" | "action" | "observation" | "answer";
 
@@ -66,6 +87,8 @@ export class Agent {
   /** 有状态：内部持有整段对话上下文，run() 只追加新一句，循环在它之上叠加。
    *  短期压缩只作用于「发往模型的上下文」，这份本地历史始终保持完整——详见 buildContext。 */
   private conversation: Message[];
+  /** 第 11 篇：状态变化钩子，默认空 */
+  private hooks: AgentHooks;
 
   constructor(
     client: LLMClient,
@@ -78,6 +101,7 @@ export class Agent {
       memoryStore?: MemoryStore;
       planner?: Planner;
       maxReplans?: number;
+      hooks?: AgentHooks;
     } = {},
   ) {
     this.client = client;
@@ -89,10 +113,31 @@ export class Agent {
     this.memoryStore = options.memoryStore;
     this.planner = options.planner;
     this.maxReplans = options.maxReplans ?? 1;
+    this.hooks = options.hooks ?? {};
     this.conversation = [{ role: "system", content: this.systemPrompt }];
   }
 
+  /** 运行时替换钩子：恢复流程先建 Agent、再接钩子，顺序更灵活 */
+  setHooks(hooks: AgentHooks): void {
+    this.hooks = hooks;
+  }
+
+  /** 导出完整本地上下文（不经过压缩），供持久化打快照 */
+  exportMessages(): Message[] {
+    return this.conversation.map((m) => ({ ...m }));
+  }
+
+  /** 把恢复出来的上下文灌回 Agent；system 消息缺失时补上当前提示语 */
+  loadMessages(messages: Message[]): void {
+    const next = messages.map((m) => ({ ...m }));
+    if (!next.some((m) => m.role === "system")) {
+      next.unshift({ role: "system", content: this.systemPrompt });
+    }
+    this.conversation = next;
+  }
+
   async run(userInput: string): Promise<AgentRunResult> {
+    await this.hooks.onUserInput?.(userInput);
     this.conversation.push({ role: "user", content: userInput });
     const { answer, steps } = await this.runLoop(this.conversation, this.maxSteps, userInput);
     return { answer, steps };
@@ -109,15 +154,22 @@ export class Agent {
    * 设计要点：每个步骤用**独立**的消息数组跑 ReAct，互不污染；只有最终的
    * 任务与答复被写回 this.conversation，保留 REPL 多轮连续性。
    */
-  async runPlan(task: string): Promise<PlanRunResult> {
+  async runPlan(
+    task: string,
+    resume?: { goal: string; steps: string[]; index: number; results: StepResult[] },
+  ): Promise<PlanRunResult> {
     if (!this.planner) {
       throw new Error("Agent 未配置 planner，无法执行规划模式（请在构造时传入 planner）");
     }
-    const plan = await this.planner.createPlan(task);
-    const stepResults: StepResult[] = [];
+    // 恢复路径跳过 createPlan：失败的步骤已经耗过一次模型调用，重做计划会引入随机漂移。
+    const plan: Plan = resume
+      ? { goal: resume.goal, steps: resume.steps }
+      : await this.planner.createPlan(task);
+    if (!resume) await this.hooks.onPlanCreated?.(plan);
+    const stepResults: StepResult[] = resume ? [...resume.results] : [];
     let steps = [...plan.steps];
     let revisions = 0;
-    let i = 0;
+    let i = resume?.index ?? 0;
 
     while (i < steps.length) {
       const step = steps[i]!;
@@ -142,14 +194,18 @@ export class Agent {
         // 这一步没跑通：先交给规划器基于「已完成步骤」重规划剩余步骤，
         // 再把失败步（done:false）记进结果里便于追溯，回到 i 重跑新计划。
         const revised = await this.planner.revisePlan(plan.goal, stepResults, step, answer);
-        stepResults.push({ step, result: answer, done: false });
+        const failed: StepResult = { step, result: answer, done: false };
+        stepResults.push(failed);
+        await this.hooks.onPlanStep?.(i, step, failed);
         steps = [...steps.slice(0, i), ...revised.steps];
         revisions++;
         continue;
       }
 
       // 成功或已无重试额度：记录这一步结果，前进
-      stepResults.push({ step, result: answer, done: converged });
+      const done: StepResult = { step, result: answer, done: converged };
+      stepResults.push(done);
+      await this.hooks.onPlanStep?.(i, step, done);
       i++;
     }
 
@@ -178,6 +234,7 @@ export class Agent {
     // 写回会话历史（REPL 连续性）：任务作为 user 消息，最终答复作为 assistant 消息
     this.conversation.push({ role: "user", content: task });
     this.conversation.push({ role: "assistant", content: finalAnswer });
+    await this.hooks.onPlanDone?.(finalAnswer);
 
     return { plan, stepResults, revisions, answer: finalAnswer };
   }
@@ -202,6 +259,8 @@ export class Agent {
   ): Promise<{ answer: string; steps: AgentStep[]; converged: boolean }> {
     const steps: AgentStep[] = [];
     const tools = this.registry.toDefinitions();
+    /** 一次 runLoop 内的多个工具调用属于同一组，恢复时合并回一条 assistant 消息 */
+    const group = randomUUID();
 
     for (let step = 0; step < budget; step++) {
       // 组装本轮发给模型的上下文：基础 system + 长期记忆简报 + 历史（必要时压缩）
@@ -228,6 +287,9 @@ export class Agent {
           })),
         });
 
+        // 写「在途记录」必须在工具执行之前：崩溃后据此判断是否可能已产生副作用。
+        await this.hooks.onToolCalls?.(result.content, result.toolCalls, group);
+
         // 一次回复可能要求调用多个工具。彼此独立的调用（如并行抓取两个网页）
         // 用 Promise.all 同时跑，省时间；彼此依赖的调用模型会自动拆成两轮，
         // 依赖关系的编排由上面的 for 循环自然完成。registry.run 永不抛异常
@@ -236,6 +298,7 @@ export class Agent {
           result.toolCalls.map(async (call) => {
             const actionText = `${call.function.name}(${JSON.stringify(call.function.arguments)})`;
             const observation = await this.runTool(call);
+            await this.hooks.onToolResult?.(call, observation);
             return { id: call.id, actionText, observation };
           }),
         );
@@ -253,13 +316,18 @@ export class Agent {
 
       // 没有工具调用 → 这是最终答案
       const answer = result.content ?? "";
-      messages.push({ role: "assistant", content: answer });
+      const finalMessage: Message = { role: "assistant", content: answer };
+      messages.push(finalMessage);
+      await this.hooks.onAssistantMessage?.(finalMessage);
+      await this.hooks.onFinalAnswer?.(answer);
       steps.push({ kind: "answer", text: answer });
       return { answer, steps, converged: true };
     }
 
     const fallback = "（已达到最大步数限制，该步骤可能未完成，请简化问题后重试）";
-    messages.push({ role: "assistant", content: fallback });
+    const fallbackMessage: Message = { role: "assistant", content: fallback };
+    messages.push(fallbackMessage);
+    await this.hooks.onAssistantMessage?.(fallbackMessage);
     steps.push({ kind: "answer", text: fallback });
     return { answer: fallback, steps, converged: false };
   }

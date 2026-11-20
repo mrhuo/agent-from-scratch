@@ -11,4 +11,11 @@ data/summary.txt
 data/sandbox-trace.txt
 data/sandbox-verify.txt
 data/sandbox-*.html
+data/sessions/
+data/persistence-trace*.txt
+data/persistence-verify.txt
+data/persistence-*.html
+data/persistence-run.out
+data/persistence-resume.out
+data/persistence-phase.txt
 .workbuddy/
