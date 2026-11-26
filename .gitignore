@@ -23,4 +23,7 @@ data/observability-trace.txt
 data/observability-run.out
 data/observe-verify.txt
 data/observe-*.html
+data/audit-run.out
+data/audit-verify.txt
+data/audit-*.html
 .workbuddy/

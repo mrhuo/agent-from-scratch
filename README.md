@@ -24,9 +24,9 @@
 | 10 | 让 Agent 可信：权限 / 沙箱 / 人工介入 | ✅ 已完成 |
 | 11 | 持久化与恢复：会话、状态、崩溃续跑 | ✅ 已完成 |
 | 12 | 上线与可观测：并发、超时、指标与链路追踪 | ✅ 已完成 |
-| 13 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | 规划中 |
+| 13 | 收尾：本系列手搓的 vs 业界 ADK/Mastra | ✅ 已完成 |
 
-> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）；第 6 篇补齐两种记忆——短期记忆用 ContextCompressor 在历史超阈值时摘要、保真最近轮次，长期记忆用 MemoryStore 落盘 + remember/recall 工具 + 每轮检索注入，二者均通过组合接入、内核循环零改动；第 7 篇在 ReAct 循环之上叠加 Plan-and-Execute——用 Planner 把任务拆成有序步骤（JSON 模式 + 容错解析），runPlan 让每步独立跑一遍 ReAct 子循环（可调用工具），最后由中性提示终步合成，某步撞预算未收敛时有限次 revisePlan 重规划剩余步骤，规划与执行通过组合接入、内核循环零改动；第 8 篇用一层薄薄的 Orchestrator 实现多 Agent 协作——每个 Worker 就是已有的 Agent 实例，换 systemPrompt 与工具白名单即是换角色，runPipeline 用前序产出交接实现串行流水线，runParallel 用 Promise.all 并行推进独立子任务再由中性提示汇总，真实演示中审核员独立发现并纠正了写手的事实性错误，既有能力零改动复用；第 9 篇接上外部世界——不引 MCP SDK，手写 JSON-RPC 2.0 协议层、stdio 子进程传输、客户端握手与工具发现、服务端核心与一个有状态的任务看板服务；工具箱新增「原生工具」一类，参数 schema 由服务端给定、按 JSON Schema 校验，与本地 Zod 工具共用同一套定义与观察格式，Agent 内核零改动；第 10 篇给 Agent 装上边界——参数级权限（决策看参数值而非只看工具名，allow/deny/ask 三态）、工具自带的硬沙箱（根目录 / 扩展名 / 大小 / 符号链接四道边界）、人工介入（超时、审批器异常、没有审批人一律按拒绝处理）与 JSONL 审计日志，授权关卡插在 ToolRegistry 与工具实现之间，Agent 内核依旧零改动；第 11 篇把进程内状态搬到磁盘——会话快照（tmp + rename 原子写、.bak 回滚）加只追加事件日志（单调 seq、撕裂行容错）构成恢复数据源，重放时按 tool_call_id 幂等去重，只读调用可重放、有副作用的调用只标记不确定，计划进度也从事件重建并从下一个未完成步骤续跑；第 12 篇补上上线所需的三类机器可读信号——trace（一次请求的 span 树）、metric（Prometheus 文本）与 probe（存活/就绪），并用 FIFO 信号量限制并发、把排队耗时单独计量、用 AbortSignal 把超时穿透到 fetch。追踪只记行为与数值，不记用户输入与密钥。每篇博文对应一个 `post-NN` tag。
+> 注：第 1 篇已包含「开篇」与「工程地基」两节；第 2 篇实现「心脏：Agent Loop 与 ReAct」；第 3 篇把工具收编成正式系统（Zod 参数 schema + ToolRegistry 注册表 + 错误分类）；第 4 篇在该系统之上实现第一批真工具（calculator / readFile / searchFiles / webFetch），演示权限沙箱、网络超时与结果截断；第 5 篇让 Agent 在单个任务里自主串联、并行多个工具（依赖型任务串行编排、独立调用 Promise.all 并行）；第 6 篇补齐两种记忆——短期记忆用 ContextCompressor 在历史超阈值时摘要、保真最近轮次，长期记忆用 MemoryStore 落盘 + remember/recall 工具 + 每轮检索注入，二者均通过组合接入、内核循环零改动；第 7 篇在 ReAct 循环之上叠加 Plan-and-Execute——用 Planner 把任务拆成有序步骤（JSON 模式 + 容错解析），runPlan 让每步独立跑一遍 ReAct 子循环（可调用工具），最后由中性提示终步合成，某步撞预算未收敛时有限次 revisePlan 重规划剩余步骤，规划与执行通过组合接入、内核循环零改动；第 8 篇用一层薄薄的 Orchestrator 实现多 Agent 协作——每个 Worker 就是已有的 Agent 实例，换 systemPrompt 与工具白名单即是换角色，runPipeline 用前序产出交接实现串行流水线，runParallel 用 Promise.all 并行推进独立子任务再由中性提示汇总，真实演示中审核员独立发现并纠正了写手的事实性错误，既有能力零改动复用；第 9 篇接上外部世界——不引 MCP SDK，手写 JSON-RPC 2.0 协议层、stdio 子进程传输、客户端握手与工具发现、服务端核心与一个有状态的任务看板服务；工具箱新增「原生工具」一类，参数 schema 由服务端给定、按 JSON Schema 校验，与本地 Zod 工具共用同一套定义与观察格式，Agent 内核零改动；第 10 篇给 Agent 装上边界——参数级权限（决策看参数值而非只看工具名，allow/deny/ask 三态）、工具自带的硬沙箱（根目录 / 扩展名 / 大小 / 符号链接四道边界）、人工介入（超时、审批器异常、没有审批人一律按拒绝处理）与 JSONL 审计日志，授权关卡插在 ToolRegistry 与工具实现之间，Agent 内核依旧零改动；第 11 篇把进程内状态搬到磁盘——会话快照（tmp + rename 原子写、.bak 回滚）加只追加事件日志（单调 seq、撕裂行容错）构成恢复数据源，重放时按 tool_call_id 幂等去重，只读调用可重放、有副作用的调用只标记不确定，计划进度也从事件重建并从下一个未完成步骤续跑；第 12 篇补上上线所需的三类机器可读信号——trace（一次请求的 span 树）、metric（Prometheus 文本）与 probe（存活/就绪），并用 FIFO 信号量限制并发、把排队耗时单独计量、用 AbortSignal 把超时穿透到 fetch。追踪只记行为与数值，不记用户输入与密钥；第 13 篇把 12 项能力与 Google ADK / Mastra 逐项对齐，审计脚本现算证据行数与测试覆盖，缺一项即失败。每篇博文对应一个 `post-NN` tag。
 
 每篇博文在 `posts/NN.md`，配套代码增量在 `src/` 对应目录。
 
@@ -70,6 +70,11 @@ npx tsx scripts/demo-observability.ts
 
 # 9. 单独启动观测端点（不需要 key）
 npm run observe
+
+# 10. 能力对照审计（不需要 key / 外网）：12 项能力，证据现算
+npx tsx scripts/capability-audit.ts
+npx tsx scripts/capability-audit.ts --md
+npx tsx scripts/capability-audit.ts --only=sandbox
 ```
 
 交互式入口支持 `/persist` 进入持久化模式、`/resume [会话ID]` 在新进程恢复、`/obs` 进入可观测模式（端点 `http://127.0.0.1:9464/metrics`）。
@@ -95,9 +100,10 @@ git checkout post-09   # 回到第 9 篇（接外部世界：MCP 客户端 + 服
 git checkout post-10   # 回到第 10 篇（让 Agent 可信：权限 / 沙箱 / 人工介入）完成时的代码
 git checkout post-11   # 回到第 11 篇（持久化与恢复：快照 / 事件日志 / 崩溃续跑）完成时的代码
 git checkout post-12   # 回到第 12 篇（上线与可观测：并发 / 超时 / 指标 / 链路追踪）完成时的代码
+git checkout post-13   # 回到第 13 篇（收尾对照：ADK / Mastra 逐项比对）完成时的代码
 ```
 
-后续章节发布后会追加 `post-13` …… 以此类推。
+post-01 至 post-13 均已发布。
 
 ## 目录结构
 
@@ -116,7 +122,8 @@ agent-from-scratch/
 │  ├─ mcp/               # 篇09：MCP 客户端 + 服务端（JSON-RPC 2.0 / stdio）
 │  ├─ sandbox/           # 篇10：参数级权限 / 路径沙箱 / 人工审批 / 审计
 │  ├─ persistence/       # 篇11：session 存储
-│  └─ observe/           # 篇12：trace / 指标 / 并发限流 / 超时取消 / HTTP 端点
+│  ├─ observe/           # 篇12：trace / 指标 / 并发限流 / 超时取消 / HTTP 端点
+│  └─ audit/             # 篇13：12 项能力对照与证据扫描
 ├─ tests/                # Vitest，每篇一个 spec
 ├─ scripts/              # 各篇演示脚本 + 配图生成脚本
 └─ posts/                # 每篇博文草稿（md）+ assets 配图
@@ -137,3 +144,4 @@ agent-from-scratch/
 - **排队耗时与执行耗时分开**：FIFO 信号量限制并发，排队超时直接失败；总耗时里混进排队时间会让容量问题被误判成模型变慢。
 - **超时贯通到 I/O**：`AbortSignal` 从截止时间传到 `fetch`；不支持 signal 的同步调用无法被强停，只丢弃结果，这个边界写进监控口径。
 - **追踪只记行为不记内容**：span 存标识、耗时、状态、工具名与响应长度；用户输入、工具参数、模型答复与密钥一律不进追踪。
+- **对照表必须有证据**：每项能力绑定真实源码与测试文件，行数由脚本现算；文件缺失则审计以退出码 1 结束。
