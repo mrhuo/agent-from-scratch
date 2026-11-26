@@ -10,7 +10,9 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "observe": "tsx scripts/observe-server.ts",
+    "demo:observe": "tsx scripts/demo-observability.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

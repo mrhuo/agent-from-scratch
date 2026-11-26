@@ -55,6 +55,19 @@ export interface ChatResult {
   toolCalls: ToolCall[];
 }
 
+/**
+ * 最小聊天客户端接口。
+ *
+ * Agent 只依赖这三个能力，不依赖 LLMClient 的具体实现。
+ * 第 12 篇据此插入 TracedLLMClient 做链路追踪与超时透传，
+ * Agent 的循环判断一行不改。
+ */
+export interface ChatClient {
+  chat(messages: Message[], options?: ChatOptions): Promise<string>;
+  chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<string>;
+  chatWithTools(messages: Message[], tools: ToolDefinition[], options?: ChatOptions): Promise<ChatResult>;
+}
+
 export interface ChatOptions {
   /** 默认 0.7 */
   temperature?: number;
@@ -65,6 +78,8 @@ export interface ChatOptions {
   /** 是否要求模型只输出 JSON（OpenAI/DeepSeek 兼容的 json_object 模式）；
    *  供规划器等需要结构化输出的场景使用；解析侧另有容错兜底 */
   jsonMode?: boolean;
+  /** 第 12 篇：取消信号，直接传给 fetch。超时后 HTTP 请求会被真正中止 */
+  signal?: AbortSignal;
 }
 
 export interface ChatConfig {

@@ -161,6 +161,8 @@ export class LLMClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
+      // 第 12 篇：signal 由 ObservedAgent 的截止时间创建，一层层透传到真实 HTTP 请求
+      signal: options.signal,
     });
   }
 }

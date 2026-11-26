@@ -1,5 +1,5 @@
-import type { LLMClient } from "../llm/index.js";
-import type { ChatResult, Message, ToolCall } from "../llm/types.js";
+import type { ChatClient } from "../llm/index.js";
+import type { ChatResult, ChatOptions, Message, ToolCall } from "../llm/types.js";
 import { calculator, type AnyTool } from "./tools.js";
 import { ToolRegistry } from "./registry.js";
 import type { ContextCompressor } from "../memory/ContextCompressor.js";
@@ -72,7 +72,7 @@ const STEP_GUIDANCE =
  * 规划与执行通过组合接入，循环内核本身不变。
  */
 export class Agent {
-  private readonly client: LLMClient;
+  private readonly client: ChatClient;
   private readonly registry: ToolRegistry;
   private readonly maxSteps: number;
   private readonly systemPrompt: string;
@@ -91,7 +91,7 @@ export class Agent {
   private hooks: AgentHooks;
 
   constructor(
-    client: LLMClient,
+    client: ChatClient,
     options: {
       tools?: AnyTool[];
       registry?: ToolRegistry;
@@ -136,10 +136,22 @@ export class Agent {
     this.conversation = next;
   }
 
-  async run(userInput: string): Promise<AgentRunResult> {
+  /**
+   * @param options.signal 第 12 篇：取消信号。循环每圈开始时检查，
+   *  并透传给 LLMClient 的 fetch；工具执行前也检查，避免取消后继续触发副作用。
+   */
+  async run(
+    userInput: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<AgentRunResult> {
     await this.hooks.onUserInput?.(userInput);
     this.conversation.push({ role: "user", content: userInput });
-    const { answer, steps } = await this.runLoop(this.conversation, this.maxSteps, userInput);
+    const { answer, steps } = await this.runLoop(
+      this.conversation,
+      this.maxSteps,
+      userInput,
+      options,
+    );
     return { answer, steps };
   }
 
@@ -256,16 +268,21 @@ export class Agent {
     messages: Message[],
     budget: number,
     currentUserInput: string,
+    options: { signal?: AbortSignal } = {},
   ): Promise<{ answer: string; steps: AgentStep[]; converged: boolean }> {
     const steps: AgentStep[] = [];
+    const signal = options.signal;
     const tools = this.registry.toDefinitions();
     /** 一次 runLoop 内的多个工具调用属于同一组，恢复时合并回一条 assistant 消息 */
     const group = randomUUID();
 
     for (let step = 0; step < budget; step++) {
+      // 取消后不再发新请求，也不再执行工具；signal 同时传给 fetch 做真实中止
+      if (signal?.aborted) throw options.signal?.reason ?? new Error("Agent 循环已取消");
       // 组装本轮发给模型的上下文：基础 system + 长期记忆简报 + 历史（必要时压缩）
       const sendMessages = await this.buildContext(messages, currentUserInput);
-      const result: ChatResult = await this.client.chatWithTools(sendMessages, tools);
+      const chatOptions: ChatOptions = signal ? { signal } : {};
+      const result: ChatResult = await this.client.chatWithTools(sendMessages, tools, chatOptions);
 
       if (result.toolCalls.length > 0) {
         // 模型这一轮先说了一段思考（可能为空），记录下来
@@ -296,6 +313,7 @@ export class Agent {
         // （失败转成观察文本），所以 Promise.all 不会因单个工具失败而短路。
         const executed = await Promise.all(
           result.toolCalls.map(async (call) => {
+            if (signal?.aborted) throw options.signal?.reason ?? new Error("工具执行前已取消");
             const actionText = `${call.function.name}(${JSON.stringify(call.function.arguments)})`;
             const observation = await this.runTool(call);
             await this.hooks.onToolResult?.(call, observation);

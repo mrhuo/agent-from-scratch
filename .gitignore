@@ -18,4 +18,9 @@ data/persistence-*.html
 data/persistence-run.out
 data/persistence-resume.out
 data/persistence-phase.txt
+data/traces.jsonl
+data/observability-trace.txt
+data/observability-run.out
+data/observe-verify.txt
+data/observe-*.html
 .workbuddy/

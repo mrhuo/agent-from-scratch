@@ -27,17 +27,28 @@ import {
   defaultFileSandbox,
 } from "./sandbox/index.js";
 import { SessionStore, ResumableAgent } from "./persistence/index.js";
+import {
+  defaultMetrics,
+  InMemoryCollector,
+  JsonlSpanExporter,
+  Tracer,
+  Semaphore,
+  ObservedAgent,
+  createObservabilityServer,
+  listenObservabilityServer,
+} from "./observe/index.js";
 import { join } from "node:path";
 import * as readline from "node:readline";
 
 /**
- * 演示入口（累计到第 11 篇）：
+ * 演示入口（累计到第 12 篇）：
  *  - 直接输入：走 Agent Loop（含第 6 篇的短期压缩 + 长期记忆注入）。
  *  - /plan：第 7 篇的规划执行模式（Planner 拆步骤 → 分步执行 → 汇总）。
  *  - /team：第 8 篇的多 Agent 协作（串行流水线 / 并行分派 + 汇总）。
  *  - /mcp：第 9 篇的 MCP 接入（拉起本地 MCP 服务端 → 发现工具 → 交给 Agent 调用）。
  *  - /safe：第 10 篇的受限模式（参数级权限 + 路径沙箱 + 人工审批 + 审计日志）。
  *  - /resume：第 11 篇的会话恢复（从快照 + 事件日志重建上下文，幂等处理在途工具调用）。
+ *  - /obs：第 12 篇的观测模式（trace / span / 指标 / 截止时间 / 并发队列 + HTTP 端点）。
  */
 const STEP_LABEL: Record<AgentStep["kind"], string> = {
   thought: "思考",
@@ -104,6 +115,32 @@ async function main(): Promise<void> {
       "不要重试同一个操作，如实说明这一步没有完成。",
   });
 
+  // 第 12 篇：观测模式。Agent 有会话状态，所以每次 submit 都造一个新实例；
+  // 注册表、记忆、追踪器与指标则是无状态共享的。
+  const obsMetrics = defaultMetrics();
+  const obsCollector = new InMemoryCollector();
+  const obsTracer = new Tracer(obsCollector).addExporter(
+    new JsonlSpanExporter(join(process.cwd(), "data", "traces.jsonl")),
+  );
+  const obsSemaphore = new Semaphore(2);
+  const observedAgent = new ObservedAgent({
+    client,
+    agentFactory: (tracedClient) =>
+      new Agent(tracedClient, {
+        registry,
+        maxSteps: 8,
+        compressor,
+        memoryStore,
+        planner,
+      }),
+    tracer: obsTracer,
+    metrics: obsMetrics,
+    semaphore: obsSemaphore,
+    deadlineMs: 60_000,
+    model: process.env.MODEL,
+  });
+  let obsServer: Awaited<ReturnType<typeof listenObservabilityServer>> | undefined;
+
   // 第 8 篇：协调者。把全部工具交给它，由它按角色白名单分发给每个 Worker。
   const orchestrator = new Orchestrator(client, {
     tools: [...allTools, createRememberTool(memoryStore), createRecallTool(memoryStore)],
@@ -161,6 +198,8 @@ async function main(): Promise<void> {
   console.log("Agent 对话开始（输入 exit 退出）");
   // 当前是否处于第 10 篇的受限模式（/safe 切换）
   let useSafe = false;
+  // 第 12 篇：观测模式，一请求一 trace + span + 指标，附带 HTTP 抓取端点
+  let useObserved = false;
   // 第 11 篇：恢复出的会话拥有独立的 Agent 实例与持久化钩子，后续对话走它
   let resumedAgent: ResumableAgent | undefined;
   while (true) {
@@ -285,8 +324,30 @@ async function main(): Promise<void> {
       continue;
     }
 
-    if (text === "/unsafe") {
+    // 第 12 篇新增：/obs 进入可观测模式，并启动只读取证端点
+    if (text === "/obs") {
       useSafe = false;
+      useObserved = true;
+      resumedAgent = undefined;
+      if (!obsServer) {
+        obsServer = await listenObservabilityServer(
+          createObservabilityServer({
+            metrics: obsMetrics.registry,
+            collector: obsCollector,
+            semaphore: obsSemaphore,
+          }),
+          9464,
+        );
+      }
+      console.log(
+        `\n已进入观测模式：trace/span 写 data/traces.jsonl，指标端点 ${obsServer.url}/metrics，` +
+          `仪表盘 ${obsServer.url}/，并发上限 ${obsSemaphore.max}，单请求截止 ${60_000}ms。\n` +
+          "（输入 /plain 切回普通模式）\n",
+      );
+      continue;
+    }
+    if (text === "/plain") {
+      useObserved = false;
       console.log("\n已切回普通模式\n");
       continue;
     }
@@ -342,6 +403,21 @@ async function main(): Promise<void> {
       resumedAgent = new ResumableAgent({ agent: freshAgent, registry, store });
       console.log(`\n已进入持久化模式：会话 ${store.sessionId}，目录 ${store.dir}。`);
       console.log("每轮结束自动打快照；新开进程输入 /resume <会话ID> 可恢复。\n");
+      continue;
+    }
+
+    if (useObserved) {
+      const observed = await observedAgent.submit(text);
+      for (const span of obsTracer.collector.byTrace(observed.traceId)) {
+        console.log(
+          `  [span] ${span.kind}:${span.name} ${span.durationMs ?? 0}ms ${span.status}`,
+        );
+      }
+      console.log(`助手：${observed.answer}`);
+      console.log(
+        `[观测] trace=${observed.traceId.slice(0, 12)} status=${observed.status} ` +
+          `总耗时=${observed.durationMs}ms 排队=${observed.queuedMs}ms\n`,
+      );
       continue;
     }
 

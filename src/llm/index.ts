@@ -1,2 +1,2 @@
 export { LLMClient } from "./LLMClient.js";
-export type { ChatConfig, ChatOptions, Message, Role } from "./types.js";
+export type { ChatClient, ChatConfig, ChatOptions, ChatResult, Message, Role, ToolCall, ToolDefinition } from "./types.js";
